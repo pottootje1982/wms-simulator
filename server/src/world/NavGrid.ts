@@ -4,7 +4,7 @@ export const NAV_CELL_SIZE = 0.5;
 
 // Half-extents used when blocking obstacle rectangles in the nav-grid
 export const SHELF_HALF = 0.35;
-export const WALL_HALF  = 0.45;
+export const WALL_HALF = 0.45;
 
 export interface NavCell {
   walkable: boolean;
@@ -19,20 +19,20 @@ export class NavGrid {
   navW: number;
   navD: number;
   floors: number;
-  private cells: NavCell[][][];   // [floor][ny][nx]
+  private cells: NavCell[][][]; // [floor][ny][nx]
 
   constructor(worldWidth: number, worldDepth: number, floors: number) {
-    this.navW   = Math.ceil(worldWidth  / NAV_CELL_SIZE);
-    this.navD   = Math.ceil(worldDepth  / NAV_CELL_SIZE);
+    this.navW = Math.ceil(worldWidth / NAV_CELL_SIZE);
+    this.navD = Math.ceil(worldDepth / NAV_CELL_SIZE);
     this.floors = floors;
-    this.cells  = this.buildCells();
+    this.cells = this.buildCells();
   }
 
   private buildCells(): NavCell[][][] {
     return Array.from({ length: this.floors }, () =>
       Array.from({ length: this.navD }, () =>
-        Array.from({ length: this.navW }, () => ({ ...EMPTY_CELL }))
-      )
+        Array.from({ length: this.navW }, () => ({ ...EMPTY_CELL })),
+      ),
     );
   }
 
@@ -62,9 +62,14 @@ export class NavGrid {
   // ── Bounds ────────────────────────────────────────────────
 
   inBounds(nx: number, ny: number, floor: number): boolean {
-    return floor >= 0 && floor < this.floors &&
-           ny >= 0 && ny < this.navD &&
-           nx >= 0 && nx < this.navW;
+    return (
+      floor >= 0 &&
+      floor < this.floors &&
+      ny >= 0 &&
+      ny < this.navD &&
+      nx >= 0 &&
+      nx < this.navW
+    );
   }
 
   // ── Cell access ───────────────────────────────────────────
@@ -87,9 +92,13 @@ export class NavGrid {
 
   /** Mark all nav cells overlapping [cx±halfW, cy±halfD] as blocked. */
   blockRect(
-    cx: number, cy: number, floor: number,
-    halfW: number, halfD: number,
-    cellType: CellType, entityId?: string
+    cx: number,
+    cy: number,
+    floor: number,
+    halfW: number,
+    halfD: number,
+    cellType: CellType,
+    entityId?: string,
   ) {
     const nxMin = Math.ceil((cx - halfW) / this.cellSize);
     const nxMax = Math.floor((cx + halfW) / this.cellSize);
@@ -105,7 +114,13 @@ export class NavGrid {
   }
 
   /** Restore nav cells in the given rect to empty+walkable. */
-  unblockRect(cx: number, cy: number, floor: number, halfW: number, halfD: number) {
+  unblockRect(
+    cx: number,
+    cy: number,
+    floor: number,
+    halfW: number,
+    halfD: number,
+  ) {
     const nxMin = Math.ceil((cx - halfW) / this.cellSize);
     const nxMax = Math.floor((cx + halfW) / this.cellSize);
     const nyMin = Math.ceil((cy - halfD) / this.cellSize);
@@ -128,15 +143,29 @@ export class NavGrid {
   // ── Pathfinding ───────────────────────────────────────────
 
   neighbors(pos: NavVec3): NavVec3[] {
-    const dirs = [{ dnx: 1, dny: 0 }, { dnx: -1, dny: 0 }, { dnx: 0, dny: 1 }, { dnx: 0, dny: -1 }];
+    const dirs = [
+      { dnx: 1, dny: 0 },
+      { dnx: -1, dny: 0 },
+      { dnx: 0, dny: 1 },
+      { dnx: 0, dny: -1 },
+    ];
     return dirs
-      .map(d => ({ nx: pos.nx + d.dnx, ny: pos.ny + d.dny, floor: pos.floor }))
-      .filter(p => this.isWalkable(p.nx, p.ny, p.floor));
+      .map((d) => ({
+        nx: pos.nx + d.dnx,
+        ny: pos.ny + d.dny,
+        floor: pos.floor,
+      }))
+      .filter((p) => this.isWalkable(p.nx, p.ny, p.floor));
   }
 
-  neighborsWithElevator(pos: NavVec3, elevators: Map<string, Elevator>): NavVec3[] {
+  neighborsWithElevator(
+    pos: NavVec3,
+    elevators: Map<string, Elevator>,
+  ): NavVec3[] {
     const n = this.neighbors(pos);
-    if (this.getCell(pos.nx, pos.ny, pos.floor)?.cellType === 'elevator_shaft') {
+    if (
+      this.getCell(pos.nx, pos.ny, pos.floor)?.cellType === 'elevator_shaft'
+    ) {
       for (const elev of elevators.values()) {
         const elevNav = this.worldToNav(elev.x, elev.y);
         if (elevNav.nx === pos.nx && elevNav.ny === pos.ny) {
@@ -152,15 +181,19 @@ export class NavGrid {
 
   manhattan(a: NavVec3, b: NavVec3): number {
     // floor penalty ×10 because 1 world unit = 2 nav steps
-    return Math.abs(a.nx - b.nx) + Math.abs(a.ny - b.ny) + Math.abs(a.floor - b.floor) * 10;
+    return (
+      Math.abs(a.nx - b.nx) +
+      Math.abs(a.ny - b.ny) +
+      Math.abs(a.floor - b.floor) * 10
+    );
   }
 
   // ── Reset ─────────────────────────────────────────────────
 
   reset(worldWidth: number, worldDepth: number, floors: number) {
-    this.navW   = Math.ceil(worldWidth  / NAV_CELL_SIZE);
-    this.navD   = Math.ceil(worldDepth  / NAV_CELL_SIZE);
+    this.navW = Math.ceil(worldWidth / NAV_CELL_SIZE);
+    this.navD = Math.ceil(worldDepth / NAV_CELL_SIZE);
     this.floors = floors;
-    this.cells  = this.buildCells();
+    this.cells = this.buildCells();
   }
 }

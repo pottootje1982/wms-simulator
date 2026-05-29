@@ -26,8 +26,15 @@ function hexColor(c: string): number {
 }
 
 function dirBetween(a: ConveyorCell, b: ConveyorCell): ConveyorDir {
-  const dx = b.x - a.x, dy = b.y - a.y;
-  return Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'E' : 'W') : (dy > 0 ? 'S' : 'N');
+  const dx = b.x - a.x,
+    dy = b.y - a.y;
+  return Math.abs(dx) > Math.abs(dy)
+    ? dx > 0
+      ? 'E'
+      : 'W'
+    : dy > 0
+      ? 'S'
+      : 'N';
 }
 
 // ── Shared materials (created once) ───────────────────────
@@ -87,9 +94,9 @@ function makeConveyorTexture(dir: ConveyorDir): THREE.CanvasTexture {
   ctx.fillRect(0, 0, S, S);
 
   // Diagonal stripes as belt texture
-  ctx.strokeStyle = '#5d6e7e';
-  ctx.lineWidth = 4;
-  for (let i = -S; i < S * 2; i += 12) {
+  ctx.strokeStyle = '#6a8090';
+  ctx.lineWidth = 7;
+  for (let i = -S; i < S * 2; i += 16) {
     ctx.beginPath();
     ctx.moveTo(i, 0);
     ctx.lineTo(i + S, S);
@@ -124,7 +131,6 @@ export class WarehouseRenderer {
   private elevatorMeshes = new Map<string, THREE.Group>();
   private conveyorBelts: THREE.Mesh[] = []; // for UV scroll animation
   private activeFloor = 0;
-  private conveyorTime = 0;
 
   constructor(sm: SceneManager) {
     this.sm = sm;
@@ -175,24 +181,41 @@ export class WarehouseRenderer {
   }
 
   animateFrame(dt: number) {
-    // Smooth robot movement
     const speed = 7;
+
+    // Smooth robot movement
     for (const [, group] of this.robotMeshes) {
       const target = group.userData.targetPos as THREE.Vector3;
       if (target) group.position.lerp(target, Math.min(dt * speed, 1));
     }
 
+    // Smooth parcel movement
+    for (const [, mesh] of this.parcelMeshes) {
+      const group = mesh as unknown as THREE.Group;
+      const carriedBy = group.userData.carriedBy as string | null;
+      if (carriedBy) {
+        const robot = this.robotMeshes.get(carriedBy);
+        if (robot) {
+          group.position.copy(robot.position);
+          group.position.y += 0.56;
+          group.userData.floor = robot.userData.floor;
+        }
+      } else {
+        const target = group.userData.targetPos as THREE.Vector3 | null;
+        if (target) group.position.lerp(target, Math.min(dt * speed, 1));
+      }
+    }
+
     // Scroll conveyor belt UV
-    this.conveyorTime += dt;
+    const beltSpeed = 1.0;
     for (const mesh of this.conveyorBelts) {
       const mat = mesh.material as THREE.MeshLambertMaterial;
       if (mat.map) {
         const dir = mesh.userData.direction as ConveyorDir;
-        const speed = 0.6;
-        if (dir === 'E') mat.map.offset.x += dt * speed;
-        if (dir === 'W') mat.map.offset.x -= dt * speed;
-        if (dir === 'S') mat.map.offset.y -= dt * speed;
-        if (dir === 'N') mat.map.offset.y += dt * speed;
+        if (dir === 'E') mat.map.offset.x += dt * beltSpeed;
+        if (dir === 'W') mat.map.offset.x -= dt * beltSpeed;
+        if (dir === 'S') mat.map.offset.y -= dt * beltSpeed;
+        if (dir === 'N') mat.map.offset.y += dt * beltSpeed;
         mat.map.needsUpdate = true;
       }
     }
@@ -232,16 +255,8 @@ export class WarehouseRenderer {
       });
       for (let x = 0; x <= cfg.width; x += 3) {
         const pts = [
-          new THREE.Vector3(
-            x * CELL,
-            f * FLOOR_H + 0.01,
-            0,
-          ),
-          new THREE.Vector3(
-            x * CELL,
-            f * FLOOR_H + 0.01,
-            cfg.depth * CELL,
-          ),
+          new THREE.Vector3(x * CELL, f * FLOOR_H + 0.01, 0),
+          new THREE.Vector3(x * CELL, f * FLOOR_H + 0.01, cfg.depth * CELL),
         ];
         const line = new THREE.Line(
           new THREE.BufferGeometry().setFromPoints(pts),
@@ -474,9 +489,12 @@ export class WarehouseRenderer {
       const inDir: ConveyorDir = prev ? dirBetween(prev, cc) : cc.direction;
       const isBend = inDir !== cc.direction;
 
-      // Shared frame platform
+      // Frame: extend in travel direction(s) to close the gap between cells
+      const isNS = cc.direction === 'N' || cc.direction === 'S';
+      const frameW = isBend ? CELL + 0.01 : isNS ? CELL * 0.88 : CELL + 0.01;
+      const frameD = isBend ? CELL + 0.01 : isNS ? CELL + 0.01 : CELL * 0.88;
       const frame = new THREE.Mesh(
-        new THREE.BoxGeometry(CELL * 0.88, 0.18, CELL * 0.88),
+        new THREE.BoxGeometry(frameW, 0.18, frameD),
         M.convFrame,
       );
       frame.position.set(p.x, baseY + 0.09, p.z);
@@ -499,9 +517,13 @@ export class WarehouseRenderer {
     pz: number,
     baseY: number,
   ) {
+    const isNS = cc.direction === 'N' || cc.direction === 'S';
+    const beltW = isNS ? CELL * 0.78 : CELL + 0.01;
+    const beltD = isNS ? CELL + 0.01 : CELL * 0.78;
     const beltTex = makeConveyorTexture(cc.direction);
+    beltTex.wrapS = beltTex.wrapT = THREE.RepeatWrapping;
     const belt = new THREE.Mesh(
-      new THREE.BoxGeometry(CELL * 0.78, 0.025, CELL * 0.78),
+      new THREE.BoxGeometry(beltW, 0.025, beltD),
       new THREE.MeshLambertMaterial({ map: beltTex, color: 0x607080 }),
     );
     belt.position.set(px, baseY + 0.213, pz);
@@ -528,11 +550,13 @@ export class WarehouseRenderer {
     const from = dirs[inDir];
     const to = dirs[cc.direction];
 
-    // Entry / exit points relative to cell centre (shape XY = world XZ)
+    // Entry / exit points in shape space. rotation.x = -π/2 maps shape Y → world -Z,
+    // so shape Y = -(world Z offset). Entry is on the face opposite the incoming direction;
+    // exit is on the face matching the outgoing direction.
     const entryX = -from.dx * hC;
-    const entryY = -from.dz * hC;
+    const entryY = from.dz * hC; // no negation: shape -Y = world +Z
     const exitX = to.dx * hC;
-    const exitY = to.dz * hC;
+    const exitY = -to.dz * hC; // negated: shape -Y = world +Z
 
     // Arc centre: perpendicular bisectors
     const isFromHoriz = from.dx !== 0;
@@ -547,9 +571,10 @@ export class WarehouseRenderer {
     if (sweep < -Math.PI) sweep += 2 * Math.PI;
     const clockwise = sweep < 0;
 
-    // Annular sector belt surface
-    const R_out = hC * 0.98;
-    const R_in = hC * 0.18;
+    // Annular sector belt surface — midline at hC, half-width matching straight belt (CELL*0.78/2)
+    const beltHW = CELL * 0.39;
+    const R_out = hC + beltHW;
+    const R_in = Math.max(hC - beltHW, CELL * 0.02);
     const shape = new THREE.Shape();
     const sC = Math.cos(startAngle),
       sS = Math.sin(startAngle);
@@ -564,14 +589,19 @@ export class WarehouseRenderer {
     shape.closePath();
 
     const geo = new THREE.ShapeGeometry(shape, 24);
+    const beltTex = makeConveyorTexture(cc.direction);
+    beltTex.wrapS = beltTex.wrapT = THREE.RepeatWrapping;
+    beltTex.repeat.set(2, 2);
     const belt = new THREE.Mesh(
       geo,
-      new THREE.MeshLambertMaterial({ color: 0x505f6e }),
+      new THREE.MeshLambertMaterial({ map: beltTex, color: 0x607080 }),
     );
     belt.rotation.x = -Math.PI / 2;
     belt.position.set(px, baseY + 0.22, pz);
     belt.userData.floor = cc.floor;
+    belt.userData.direction = cc.direction;
     this.worldGroup.add(belt);
+    this.conveyorBelts.push(belt);
 
     // Corner guide rails (yellow arc strips at inner & outer edge)
     for (const R of [R_in + 0.02, R_out - 0.02]) {
@@ -620,8 +650,8 @@ export class WarehouseRenderer {
     baseY: number,
   ) {
     const isNS = cc.direction === 'N' || cc.direction === 'S';
-    const edgeW = isNS ? CELL * 0.88 : 0.06;
-    const edgeD = isNS ? 0.06 : CELL * 0.88;
+    const edgeW = isNS ? CELL * 0.88 : CELL + 0.01;
+    const edgeD = isNS ? CELL + 0.01 : CELL * 0.88;
     for (const offset of [-1, 1]) {
       const edge = new THREE.Mesh(
         new THREE.BoxGeometry(edgeW, 0.08, edgeD),
@@ -750,6 +780,9 @@ export class WarehouseRenderer {
     group.add(tape);
 
     this.parcelMeshes.set(p.id, group as unknown as THREE.Mesh);
+    group.userData.targetPos = null;
+    group.userData.carriedBy = null;
+    group.userData.floor = 0;
     this.worldGroup.add(group);
     this.updateParcel(p);
   }
@@ -798,18 +831,24 @@ export class WarehouseRenderer {
     }
 
     if (p.status === 'being_carried' && p.carriedBy) {
+      mesh.userData.carriedBy = p.carriedBy;
       const robot = this.robotMeshes.get(p.carriedBy);
       if (robot) {
-        mesh.position.copy(robot.userData.targetPos as THREE.Vector3);
-        mesh.position.y += 0.56;
         mesh.userData.floor = robot.userData.floor;
       }
     } else if (p.position) {
+      mesh.userData.carriedBy = null;
       const pos = cellPos(p.position.x, p.position.y, p.position.floor);
-      mesh.position.copy(pos);
-      mesh.position.y += 0.22;
+      pos.y += 0.22;
+      if (!mesh.userData.targetPos) {
+        // First placement — snap immediately
+        mesh.position.copy(pos);
+      }
+      mesh.userData.targetPos = pos.clone();
       mesh.userData.floor = p.position.floor;
     } else if (p.shelfId) {
+      mesh.userData.carriedBy = null;
+      mesh.userData.targetPos = null;
       mesh.visible = false;
       return;
     }

@@ -11,24 +11,57 @@ function key(nx: number, ny: number, floor: number, t: number) {
   return `${nx},${ny},${floor},${t}`;
 }
 
+class NodeHeap {
+  private data: Node[] = [];
+  get length() { return this.data.length; }
+
+  push(n: Node) {
+    this.data.push(n);
+    let i = this.data.length - 1;
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (this.data[p].f <= this.data[i].f) break;
+      [this.data[i], this.data[p]] = [this.data[p], this.data[i]];
+      i = p;
+    }
+  }
+
+  shift(): Node | undefined {
+    if (this.data.length === 0) return undefined;
+    const top = this.data[0];
+    const last = this.data.pop()!;
+    if (this.data.length > 0) {
+      this.data[0] = last;
+      let i = 0;
+      while (true) {
+        let m = i;
+        const l = 2 * i + 1, r = 2 * i + 2, n = this.data.length;
+        if (l < n && this.data[l].f < this.data[m].f) m = l;
+        if (r < n && this.data[r].f < this.data[m].f) m = r;
+        if (m === i) break;
+        [this.data[i], this.data[m]] = [this.data[m], this.data[i]];
+        i = m;
+      }
+    }
+    return top;
+  }
+}
+
 export function spacetimeAStar(
   start: NavVec3,
   goal: NavVec3,
   navGrid: NavGrid,
   elevators: Map<string, Elevator>,
   constraints: STConstraint[],
-  maxT = 400   // doubled vs old (nav steps are 2× finer than world steps)
+  maxT = 200,
 ): NavVec3[] | null {
-  const cset = new Set(constraints.map(c => key(c.nx, c.ny, c.floor, c.t)));
+  const cset = new Set(constraints.map((c) => key(c.nx, c.ny, c.floor, c.t)));
   const h = (v: NavVec3) => navGrid.manhattan(v, goal);
 
-  // Min-heap via sorted array (warehouse scale is small enough)
-  const open: Node[] = [];
-  const push = (n: Node) => { open.push(n); open.sort((a, b) => a.f - b.f); };
-
+  const open = new NodeHeap();
   const visited = new Map<string, number>();
 
-  push({ nx: start.nx, ny: start.ny, floor: start.floor, t: 0, g: 0, f: h(start), parent: null });
+  open.push({ nx: start.nx, ny: start.ny, floor: start.floor, t: 0, g: 0, f: h(start), parent: null });
 
   while (open.length > 0) {
     const cur = open.shift()!;
@@ -60,7 +93,7 @@ export function spacetimeAStar(
       const nk = key(nv.nx, nv.ny, nv.floor, nt);
       if ((visited.get(nk) ?? Infinity) <= ng) continue;
 
-      push({ nx: nv.nx, ny: nv.ny, floor: nv.floor, t: nt, g: ng, f: ng + h(nv), parent: cur });
+      open.push({ nx: nv.nx, ny: nv.ny, floor: nv.floor, t: nt, g: ng, f: ng + h(nv), parent: cur });
     }
   }
 

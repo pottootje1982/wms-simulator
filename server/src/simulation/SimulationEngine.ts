@@ -1,9 +1,9 @@
 import { World } from '../world/World';
 import {
   Robot, TransferTask, Parcel,
-  TickUpdatePayload, SimEvent, Vec3, NavVec3
+  TickUpdatePayload, SimEvent, Vec3, NavVec3, STConstraint
 } from '../types';
-import { planPaths, CBSAgent } from '../pathfinding/CBS';
+import { spacetimeAStar } from '../pathfinding/AStar';
 
 const PICKUP_TICKS   = 3;
 const DROPOFF_TICKS  = 3;
@@ -129,27 +129,20 @@ export class SimulationEngine {
 
   private planPath(robot: Robot, goal: Vec3) {
     const navGrid = this.world.navGrid;
-    const activeAgents: CBSAgent[] = [];
 
-    for (const r of this.world.robots.values()) {
-      if (r.id === robot.id) continue;
-      if (r.status === 'navigating_to_pickup' || r.status === 'navigating_to_dropoff') {
-        const rGoal = this.getRobotGoal(r);
-        if (rGoal) activeAgents.push({
-          id: r.id,
-          startNav: navGrid.worldToNavVec3(r.position),
-          goalNav:  navGrid.worldToNavVec3(rGoal),
-        });
+    // Prioritized planning: add space-time constraints from all other robots'
+    // committed paths so this robot routes around them without replanning others.
+    const constraints: STConstraint[] = [];
+    for (const [otherId, path] of this.robotNavPaths) {
+      if (otherId === robot.id) continue;
+      for (let t = 0; t < path.length; t++) {
+        constraints.push({ nx: path[t].nx, ny: path[t].ny, floor: path[t].floor, t });
       }
     }
-    activeAgents.push({
-      id: robot.id,
-      startNav: navGrid.worldToNavVec3(robot.position),
-      goalNav:  navGrid.worldToNavVec3(goal),
-    });
 
-    const solution = planPaths(activeAgents, navGrid, this.world.elevators, this.robotNavPaths);
-    const navPath  = solution.get(robot.id);
+    const startNav = navGrid.worldToNavVec3(robot.position);
+    const goalNav  = navGrid.worldToNavVec3(goal);
+    const navPath  = spacetimeAStar(startNav, goalNav, navGrid, this.world.elevators, constraints);
 
     if (navPath && navPath.length > 0) {
       this.robotNavPaths.set(robot.id, navPath);

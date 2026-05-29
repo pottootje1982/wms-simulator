@@ -1,16 +1,33 @@
 // ── Geometry ──────────────────────────────────────────────
-export interface Vec3    { x: number;  y: number;  floor: number; }
-export interface NavVec3 { nx: number; ny: number; floor: number; }
+export interface Vec3 {
+  x: number;
+  y: number;
+  floor: number;
+}
+export interface NavVec3 {
+  nx: number;
+  ny: number;
+  floor: number;
+}
 
 // ── Pathfinding ───────────────────────────────────────────
 // Space-time constraint (in nav-grid indices, not world coords)
-export interface STConstraint { nx: number; ny: number; floor: number; t: number; }
+export interface STConstraint {
+  nx: number;
+  ny: number;
+  floor: number;
+  t: number;
+}
 
 // ── Grid ──────────────────────────────────────────────────
 export type CellType =
-  | 'empty' | 'shelf' | 'wall'
-  | 'elevator_shaft' | 'conveyor'
-  | 'charging_station' | 'operator_station';
+  | 'empty'
+  | 'shelf'
+  | 'wall'
+  | 'elevator_shaft'
+  | 'conveyor'
+  | 'charging_station'
+  | 'operator_station';
 
 export type ConveyorDir = 'N' | 'S' | 'E' | 'W';
 
@@ -21,24 +38,29 @@ export interface Cell {
 }
 
 export interface WorldConfig {
-  width: number;   // X cells
-  depth: number;   // Y cells
+  width: number; // X cells
+  depth: number; // Y cells
   floors: number;
 }
 
 // ── Robot ─────────────────────────────────────────────────
 export type RobotStatus =
-  | 'idle' | 'navigating_to_pickup' | 'picking_up'
-  | 'navigating_to_dropoff' | 'dropping_off'
-  | 'navigating_to_elevator' | 'waiting_for_elevator'
-  | 'in_elevator' | 'charging';
+  | 'idle'
+  | 'navigating_to_pickup'
+  | 'picking_up'
+  | 'navigating_to_dropoff'
+  | 'dropping_off'
+  | 'navigating_to_elevator'
+  | 'waiting_for_elevator'
+  | 'in_elevator'
+  | 'charging';
 
 export interface Robot {
   id: string;
   name: string;
   position: Vec3;
   prevPosition: Vec3;
-  visualOffset: number;   // 0..1 animation lerp
+  visualOffset: number; // 0..1 animation lerp
   status: RobotStatus;
   heldParcelId?: string;
   taskId?: string;
@@ -48,20 +70,28 @@ export interface Robot {
 }
 
 // ── Shelf ─────────────────────────────────────────────────
-export interface ShelfSlot { row: number; col: number; parcelId?: string; }
+export interface ShelfSlot {
+  row: number;
+  col: number;
+  parcelId?: string;
+}
 
 export interface Shelf {
   id: string;
   label: string;
-  accessPosition: Vec3;  // cell robot stands on to pick/place
-  shelfPosition: Vec3;   // actual shelf cell (blocked for walking)
+  accessPosition: Vec3; // cell robot stands on to pick/place
+  shelfPosition: Vec3; // actual shelf cell (blocked for walking)
   rows: number;
   cols: number;
   slots: ShelfSlot[][];
 }
 
 // ── Elevator ──────────────────────────────────────────────
-export type ElevatorStatus = 'idle' | 'moving_up' | 'moving_down' | 'doors_open';
+export type ElevatorStatus =
+  | 'idle'
+  | 'moving_up'
+  | 'moving_down'
+  | 'doors_open';
 
 export interface Elevator {
   id: string;
@@ -76,18 +106,27 @@ export interface Elevator {
 }
 
 // ── Conveyor ──────────────────────────────────────────────
-export interface ConveyorCell { x: number; y: number; floor: number; direction: ConveyorDir; }
+export interface ConveyorCell {
+  x: number;
+  y: number;
+  floor: number;
+  direction: ConveyorDir;
+}
 
 export interface Conveyor {
   id: string;
   label?: string;
   cells: ConveyorCell[];
   active: boolean;
-  speedTicks: number;  // advance parcel every N ticks
+  speedTicks: number; // advance parcel every N ticks
 }
 
 // ── Parcel ────────────────────────────────────────────────
-export type ParcelStatus = 'on_shelf' | 'being_carried' | 'on_conveyor' | 'delivered';
+export type ParcelStatus =
+  | 'on_shelf'
+  | 'being_carried'
+  | 'on_conveyor'
+  | 'delivered';
 
 export interface Parcel {
   id: string;
@@ -103,13 +142,25 @@ export interface Parcel {
 }
 
 // ── Operator ──────────────────────────────────────────────
-export interface Operator { id: string; name: string; position: Vec3; }
+export interface Operator {
+  id: string;
+  name: string;
+  position: Vec3;
+}
 
 // ── Wall ──────────────────────────────────────────────────
-export interface Wall { id: string; position: Vec3; }
+export interface Wall {
+  id: string;
+  position: Vec3;
+}
 
 // ── Task ──────────────────────────────────────────────────
-export type TaskStatus = 'queued' | 'assigned' | 'in_progress' | 'completed' | 'failed';
+export type TaskStatus =
+  | 'queued'
+  | 'assigned'
+  | 'in_progress'
+  | 'completed'
+  | 'failed';
 
 export interface TransferTask {
   id: string;
@@ -152,9 +203,12 @@ export interface TickUpdatePayload {
 }
 
 export type SimEventType =
-  | 'parcel_picked_up' | 'parcel_dropped_off'
-  | 'task_completed' | 'task_failed'
-  | 'robot_idle' | 'elevator_arrived';
+  | 'parcel_picked_up'
+  | 'parcel_dropped_off'
+  | 'task_completed'
+  | 'task_failed'
+  | 'robot_idle'
+  | 'elevator_arrived';
 
 export interface SimEvent {
   type: SimEventType;
@@ -164,5 +218,9 @@ export interface SimEvent {
 
 export interface WSMessage {
   type: WSMsgType;
-  payload: FullStatePayload | TickUpdatePayload | SimEvent | { message: string };
+  payload:
+    | FullStatePayload
+    | TickUpdatePayload
+    | SimEvent
+    | { message: string };
 }
