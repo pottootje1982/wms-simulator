@@ -1,13 +1,16 @@
 import {
-  Cell, CellType, WorldConfig, Vec3,
+  WorldConfig, Vec3,
   Robot, Shelf, Elevator, Conveyor,
   Parcel, Operator, Wall, TransferTask,
   FullStatePayload
 } from '../types';
+import { NavGrid, NavCell, SHELF_HALF, WALL_HALF } from './NavGrid';
+
+export { NavCell };
 
 export class World {
   config: WorldConfig;
-  cells: Cell[][][];                    // [floor][y][x]
+  navGrid: NavGrid;
   robots    = new Map<string, Robot>();
   shelves   = new Map<string, Shelf>();
   elevators = new Map<string, Elevator>();
@@ -18,82 +21,70 @@ export class World {
   tasks     = new Map<string, TransferTask>();
 
   constructor(config: WorldConfig) {
-    this.config = config;
-    this.cells = this.buildCells(config);
-  }
-
-  private buildCells(cfg: WorldConfig): Cell[][][] {
-    const cells: Cell[][][] = [];
-    for (let f = 0; f < cfg.floors; f++) {
-      cells[f] = [];
-      for (let y = 0; y < cfg.depth; y++) {
-        cells[f][y] = [];
-        for (let x = 0; x < cfg.width; x++) {
-          cells[f][y][x] = { type: 'empty' };
-        }
-      }
-    }
-    return cells;
+    this.config  = config;
+    this.navGrid = new NavGrid(config.width, config.depth, config.floors);
   }
 
   reset(config?: WorldConfig) {
     if (config) this.config = config;
-    this.cells = this.buildCells(this.config);
+    this.navGrid.reset(this.config.width, this.config.depth, this.config.floors);
     this.robots.clear(); this.shelves.clear(); this.elevators.clear();
     this.conveyors.clear(); this.parcels.clear(); this.operators.clear();
     this.walls.clear(); this.tasks.clear();
   }
 
+  // ── Entity placement ──────────────────────────────────────
+
+  placeShelf(s: Shelf) {
+    const sp = s.shelfPosition;
+    this.navGrid.blockRect(sp.x, sp.y, sp.floor, SHELF_HALF, SHELF_HALF, 'shelf', s.id);
+  }
+
+  removeShelf(s: Shelf) {
+    const sp = s.shelfPosition;
+    this.navGrid.unblockRect(sp.x, sp.y, sp.floor, SHELF_HALF, SHELF_HALF);
+  }
+
+  placeWall(w: Wall) {
+    const p = w.position;
+    this.navGrid.blockRect(p.x, p.y, p.floor, WALL_HALF, WALL_HALF, 'wall', w.id);
+  }
+
+  placeElevator(e: Elevator) {
+    const { nx, ny } = this.navGrid.worldToNav(e.x, e.y);
+    for (const f of e.floors) {
+      this.navGrid.setNavCell(nx, ny, f, { walkable: true, cellType: 'elevator_shaft', entityId: e.id });
+    }
+  }
+
+  placeConveyor(c: Conveyor) {
+    for (const cell of c.cells) {
+      const { nx, ny } = this.navGrid.worldToNav(cell.x, cell.y);
+      this.navGrid.setNavCell(nx, ny, cell.floor, { walkable: true, cellType: 'conveyor', entityId: c.id });
+    }
+  }
+
+  placeOperator(op: Operator) {
+    const { nx, ny } = this.navGrid.worldToNav(op.position.x, op.position.y);
+    this.navGrid.setNavCell(nx, ny, op.position.floor, { walkable: true, cellType: 'operator_station', entityId: op.id });
+  }
+
+  // ── World-space cell query ─────────────────────────────────
+
+  getCellAtWorld(wx: number, wy: number, floor: number) {
+    return this.navGrid.getCellAtWorld(wx, wy, floor);
+  }
+
+  // ── Pathfinding helpers (delegated to NavGrid) ─────────────
+
   inBounds(x: number, y: number, floor: number): boolean {
-    return floor >= 0 && floor < this.config.floors &&
-           y >= 0 && y < this.config.depth &&
-           x >= 0 && x < this.config.width;
-  }
-
-  getCell(x: number, y: number, floor: number): Cell | null {
-    if (!this.inBounds(x, y, floor)) return null;
-    return this.cells[floor][y][x];
-  }
-
-  setCell(x: number, y: number, floor: number, cell: Cell) {
-    if (!this.inBounds(x, y, floor)) return;
-    this.cells[floor][y][x] = cell;
+    const { nx, ny } = this.navGrid.worldToNav(x, y);
+    return this.navGrid.inBounds(nx, ny, floor);
   }
 
   isWalkable(x: number, y: number, floor: number): boolean {
-    const c = this.getCell(x, y, floor);
-    if (!c) return false;
-    return c.type !== 'wall' && c.type !== 'shelf';
-  }
-
-  neighbors(pos: Vec3): Vec3[] {
-    const dirs = [{ dx: 1, dy: 0 }, { dx: -1, dy: 0 }, { dx: 0, dy: 1 }, { dx: 0, dy: -1 }];
-    return dirs
-      .map(d => ({ x: pos.x + d.dx, y: pos.y + d.dy, floor: pos.floor }))
-      .filter(p => this.isWalkable(p.x, p.y, p.floor));
-  }
-
-  /** Neighbors including cross-floor elevator transitions */
-  neighborsWithElevator(pos: Vec3): Vec3[] {
-    const n = this.neighbors(pos);
-    // Check if standing on an elevator shaft
-    const cell = this.getCell(pos.x, pos.y, pos.floor);
-    if (cell?.type === 'elevator_shaft') {
-      const elev = this.findElevatorAt(pos.x, pos.y);
-      if (elev) {
-        for (const f of elev.floors) {
-          if (f !== pos.floor) n.push({ x: pos.x, y: pos.y, floor: f });
-        }
-      }
-    }
-    return n;
-  }
-
-  findElevatorAt(x: number, y: number): Elevator | undefined {
-    for (const e of this.elevators.values()) {
-      if (e.x === x && e.y === y) return e;
-    }
-    return undefined;
+    const { nx, ny } = this.navGrid.worldToNav(x, y);
+    return this.navGrid.isWalkable(nx, ny, floor);
   }
 
   manhattan(a: Vec3, b: Vec3): number {

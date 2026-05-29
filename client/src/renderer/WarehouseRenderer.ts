@@ -26,12 +26,8 @@ function hexColor(c: string): number {
 }
 
 function dirBetween(a: ConveyorCell, b: ConveyorCell): ConveyorDir {
-  const dx = b.x - a.x,
-    dy = b.y - a.y;
-  if (dx === 1) return 'E';
-  if (dx === -1) return 'W';
-  if (dy === 1) return 'S';
-  return 'N';
+  const dx = b.x - a.x, dy = b.y - a.y;
+  return Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'E' : 'W') : (dy > 0 ? 'S' : 'N');
 }
 
 // ── Shared materials (created once) ───────────────────────
@@ -218,9 +214,9 @@ export class WarehouseRenderer {
       const mesh = new THREE.Mesh(geo, mat);
       mesh.rotation.x = -Math.PI / 2;
       mesh.position.set(
-        (cfg.width / 2 - 0.5) * CELL,
+        (cfg.width / 2) * CELL,
         f * FLOOR_H - 0.01,
-        (cfg.depth / 2 - 0.5) * CELL,
+        (cfg.depth / 2) * CELL,
       );
       mesh.receiveShadow = true;
       mesh.userData.floor = f;
@@ -237,14 +233,14 @@ export class WarehouseRenderer {
       for (let x = 0; x <= cfg.width; x += 3) {
         const pts = [
           new THREE.Vector3(
-            x * CELL - 0.5 * CELL,
+            x * CELL,
             f * FLOOR_H + 0.01,
-            -0.5 * CELL,
+            0,
           ),
           new THREE.Vector3(
-            x * CELL - 0.5 * CELL,
+            x * CELL,
             f * FLOOR_H + 0.01,
-            (cfg.depth - 0.5) * CELL,
+            cfg.depth * CELL,
           ),
         ];
         const line = new THREE.Line(
@@ -270,9 +266,9 @@ export class WarehouseRenderer {
         const ceil = new THREE.Mesh(ceilGeo, ceilMat);
         ceil.rotation.x = -Math.PI / 2;
         ceil.position.set(
-          (cfg.width / 2 - 0.5) * CELL,
+          (cfg.width / 2) * CELL,
           f * FLOOR_H - 0.01,
-          (cfg.depth / 2 - 0.5) * CELL,
+          (cfg.depth / 2) * CELL,
         );
         ceil.userData.floor = f - 1;
         this.worldGroup.add(ceil);
@@ -833,8 +829,8 @@ export class WarehouseRenderer {
   }
 
   private centerCamera(cfg: WorldConfig) {
-    const cx = (cfg.width / 2 - 0.5) * CELL;
-    const cz = (cfg.depth / 2 - 0.5) * CELL;
+    const cx = (cfg.width / 2) * CELL;
+    const cz = (cfg.depth / 2) * CELL;
     this.sm.controls.target.set(cx, 0, cz);
     this.sm.camera.position.set(cx + 20, 30, cz + 24);
     this.sm.controls.update();

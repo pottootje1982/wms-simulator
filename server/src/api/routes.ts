@@ -1,4 +1,4 @@
-import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { FastifyInstance, FastifyRequest } from 'fastify';
 import { World } from '../world/World';
 import { SimulationEngine } from '../simulation/SimulationEngine';
 import { WSHub } from '../ws/Hub';
@@ -66,8 +66,8 @@ export function registerRoutes(
     if (x === undefined || y === undefined || floor === undefined || !rows || !cols)
       return reply.status(400).send({ error: 'x/y/floor/rows/cols required' });
 
-    // Access cell = (x, y), shelf cell = (x+1, y) — shelf is one cell behind access
-    const shelfX = x + 1 < world.config.width ? x + 1 : x - 1;
+    // Shelf body 1.0 world unit east of the access aisle position
+    const shelfX = x + 1.0;
     const slots: ShelfSlot[][] = Array.from({ length: rows }, (_, r) =>
       Array.from({ length: cols }, (_, c) => ({ row: r, col: c }))
     );
@@ -79,7 +79,7 @@ export function registerRoutes(
       rows, cols, slots
     };
     world.shelves.set(id, shelf);
-    world.setCell(shelfX, y, floor, { type: 'shelf', entityId: id });
+    world.placeShelf(shelf);
     broadcastFull();
     return shelf;
   });
@@ -88,7 +88,7 @@ export function registerRoutes(
     const shelf = world.shelves.get(req.params.id);
     if (!shelf) return reply.status(404).send({ error: 'Not found' });
     world.shelves.delete(req.params.id);
-    world.setCell(shelf.shelfPosition.x, shelf.shelfPosition.y, shelf.shelfPosition.floor, { type: 'empty' });
+    world.removeShelf(shelf);
     broadcastFull();
     return { ok: true };
   });
@@ -102,7 +102,7 @@ export function registerRoutes(
       const id = nanoid();
       const wall: Wall = { id, position: { x, y, floor } };
       world.walls.set(id, wall);
-      world.setCell(x, y, floor, { type: 'wall', entityId: id });
+      world.placeWall(wall);
       created.push(wall);
     }
     broadcastFull();
@@ -120,9 +120,7 @@ export function registerRoutes(
       status: 'idle', occupantIds: []
     };
     world.elevators.set(id, elev);
-    for (const f of floors) {
-      world.setCell(x, y, f, { type: 'elevator_shaft', entityId: id });
-    }
+    world.placeElevator(elev);
     broadcastFull();
     return elev;
   });
@@ -135,9 +133,7 @@ export function registerRoutes(
     const id = nanoid();
     const conv: Conveyor = { id, label, cells, active: true, speedTicks };
     world.conveyors.set(id, conv);
-    for (const c of cells) {
-      world.setCell(c.x, c.y, c.floor, { type: 'conveyor', entityId: id, conveyorDir: c.direction });
-    }
+    world.placeConveyor(conv);
     broadcastFull();
     return conv;
   });
@@ -148,11 +144,13 @@ export function registerRoutes(
   }>) => {
     const { name, x, y, floor, color = '#f59e0b' } = req.body;
     const id = nanoid();
-    const pos: Vec3 = { x, y, floor };
+    // Snap spawn position to nearest nav cell center to maintain the
+    // invariant that robot positions are always nav-cell-aligned
+    const snapped = world.navGrid.navToWorldVec3(world.navGrid.worldToNavVec3({ x, y, floor }));
     const robot: Robot = {
       id, name: name ?? `Robot-${id.slice(0, 4)}`,
-      position: pos, prevPosition: pos, visualOffset: 0,
-      status: 'idle', color, battery: 100, basePosition: pos
+      position: snapped, prevPosition: snapped, visualOffset: 0,
+      status: 'idle', color, battery: 100, basePosition: snapped
     };
     world.robots.set(id, robot);
     broadcastFull();
@@ -174,7 +172,7 @@ export function registerRoutes(
     const id = nanoid();
     const op: Operator = { id, name: name ?? `Op-${id.slice(0, 4)}`, position: { x, y, floor } };
     world.operators.set(id, op);
-    world.setCell(x, y, floor, { type: 'operator_station', entityId: id });
+    world.placeOperator(op);
     broadcastFull();
     return op;
   });

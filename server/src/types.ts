@@ -1,5 +1,10 @@
 // ── Geometry ──────────────────────────────────────────────
-export interface Vec3 { x: number; y: number; floor: number; }
+export interface Vec3    { x: number;  y: number;  floor: number; }
+export interface NavVec3 { nx: number; ny: number; floor: number; }
+
+// ── Pathfinding ───────────────────────────────────────────
+// Space-time constraint (in nav-grid indices, not world coords)
+export interface STConstraint { nx: number; ny: number; floor: number; t: number; }
 
 // ── Grid ──────────────────────────────────────────────────
 export type CellType =
