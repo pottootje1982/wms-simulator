@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install *)",
+      "Bash(npx tsc *)",
+      "Bash(timeout 5 npm run dev)",
+      "Bash(npm run *)",
+      "Bash(curl -s http://localhost:3000/api/world)",
+      "Bash(kill %1)"
+    ]
+  }
+}
