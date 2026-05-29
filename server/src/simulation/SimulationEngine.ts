@@ -1,12 +1,18 @@
 import { World } from '../world/World';
 import {
-  Robot, TransferTask, Parcel,
-  TickUpdatePayload, SimEvent, Vec3, NavVec3, STConstraint
+  Robot,
+  TransferTask,
+  Parcel,
+  TickUpdatePayload,
+  SimEvent,
+  Vec3,
+  NavVec3,
+  STConstraint,
 } from '../types';
 import { spacetimeAStar } from '../pathfinding/AStar';
 
-const PICKUP_TICKS   = 3;
-const DROPOFF_TICKS  = 3;
+const PICKUP_TICKS = 3;
+const DROPOFF_TICKS = 3;
 const ELEVATOR_TICKS = 8;
 const DOOR_OPEN_TICKS = 4;
 
@@ -22,12 +28,29 @@ export class SimulationEngine {
   private interval?: ReturnType<typeof setInterval>;
   private robotWaitTick = new Map<string, number>();
   private robotNavPaths = new Map<string, NavVec3[]>();
-  private robotNavIdx   = new Map<string, number>();
+  private robotNavIdx = new Map<string, number>();
 
   onTick?: (payload: TickUpdatePayload) => void;
   onEvent?: (event: SimEvent) => void;
 
-  constructor(world: World) { this.world = world; }
+  // ── Perpetual mode ─────────────────────────────────────
+  private perpetual = false;
+  private outboundConveyorId?: string;
+  private perpetualParcelCounter = 0;
+  private perpetualTaskCounter = 0;
+
+  constructor(world: World) {
+    this.world = world;
+  }
+
+  enablePerpetual(outboundConveyorId: string) {
+    this.perpetual = true;
+    this.outboundConveyorId = outboundConveyorId;
+  }
+
+  disablePerpetual() {
+    this.perpetual = false;
+  }
 
   start(tps = 5) {
     if (this.running) return;
@@ -47,6 +70,9 @@ export class SimulationEngine {
     this.robotWaitTick.clear();
     this.robotNavPaths.clear();
     this.robotNavIdx.clear();
+    this.perpetual = false;
+    this.perpetualParcelCounter = 0;
+    this.perpetualTaskCounter = 0;
   }
 
   // ── Main tick ──────────────────────────────────────────
@@ -57,14 +83,15 @@ export class SimulationEngine {
     this.processElevators();
     this.processConveyors();
     this.processRobots();
+    if (this.perpetual) this.generatePerpetualTasks();
 
     if (this.onTick) {
       this.onTick({
         tick: this.tick,
-        robots:    [...this.world.robots.values()],
+        robots: [...this.world.robots.values()],
         elevators: [...this.world.elevators.values()],
-        parcels:   [...this.world.parcels.values()],
-        tasks:     [...this.world.tasks.values()],
+        parcels: [...this.world.parcels.values()],
+        tasks: [...this.world.tasks.values()],
       });
     }
   }
@@ -72,27 +99,41 @@ export class SimulationEngine {
   // ── Task assignment ────────────────────────────────────
 
   private assignPendingTasks() {
-    const pending = [...this.world.tasks.values()].filter(t => t.status === 'queued');
+    const pending = [...this.world.tasks.values()].filter(
+      (t) => t.status === 'queued',
+    );
     if (pending.length === 0) return;
 
-    const idleRobots = [...this.world.robots.values()].filter(r => r.status === 'idle' && !r.taskId);
+    const idleRobots = [...this.world.robots.values()].filter(
+      (r) => r.status === 'idle' && !r.taskId,
+    );
     if (idleRobots.length === 0) return;
 
     for (const task of pending) {
       if (idleRobots.length === 0) break;
       const robot = idleRobots.shift()!;
 
-      task.status    = 'assigned';
-      task.robotId   = robot.id;
+      task.status = 'assigned';
+      task.robotId = robot.id;
       task.startedAt = this.tick;
-      robot.taskId   = task.id;
-      robot.status   = 'navigating_to_pickup';
+      robot.taskId = task.id;
+      robot.status = 'navigating_to_pickup';
 
       const parcel = this.world.parcels.get(task.parcelId);
-      if (!parcel) { task.status = 'failed'; robot.taskId = undefined; robot.status = 'idle'; continue; }
+      if (!parcel) {
+        task.status = 'failed';
+        robot.taskId = undefined;
+        robot.status = 'idle';
+        continue;
+      }
 
       const pickupPos = this.getParcelAccessPos(parcel);
-      if (!pickupPos) { task.status = 'failed'; robot.taskId = undefined; robot.status = 'idle'; continue; }
+      if (!pickupPos) {
+        task.status = 'failed';
+        robot.taskId = undefined;
+        robot.status = 'idle';
+        continue;
+      }
 
       this.planPath(robot, pickupPos);
     }
@@ -114,15 +155,20 @@ export class SimulationEngine {
         case 'navigating_to_pickup':
         case 'navigating_to_dropoff':
         case 'navigating_to_elevator':
-          this.stepRobot(robot); break;
+          this.stepRobot(robot);
+          break;
         case 'picking_up':
-          this.handlePickup(robot); break;
+          this.handlePickup(robot);
+          break;
         case 'dropping_off':
-          this.handleDropoff(robot); break;
+          this.handleDropoff(robot);
+          break;
         case 'waiting_for_elevator':
-          this.handleWaitElevator(robot); break;
+          this.handleWaitElevator(robot);
+          break;
         case 'in_elevator':
-          this.handleInElevator(robot); break;
+          this.handleInElevator(robot);
+          break;
       }
     }
   }
@@ -136,13 +182,24 @@ export class SimulationEngine {
     for (const [otherId, path] of this.robotNavPaths) {
       if (otherId === robot.id) continue;
       for (let t = 0; t < path.length; t++) {
-        constraints.push({ nx: path[t].nx, ny: path[t].ny, floor: path[t].floor, t });
+        constraints.push({
+          nx: path[t].nx,
+          ny: path[t].ny,
+          floor: path[t].floor,
+          t,
+        });
       }
     }
 
     const startNav = navGrid.worldToNavVec3(robot.position);
-    const goalNav  = navGrid.worldToNavVec3(goal);
-    const navPath  = spacetimeAStar(startNav, goalNav, navGrid, this.world.elevators, constraints);
+    const goalNav = navGrid.worldToNavVec3(goal);
+    const navPath = spacetimeAStar(
+      startNav,
+      goalNav,
+      navGrid,
+      this.world.elevators,
+      constraints,
+    );
 
     if (navPath && navPath.length > 0) {
       this.robotNavPaths.set(robot.id, navPath);
@@ -180,7 +237,11 @@ export class SimulationEngine {
 
     robot.prevPosition = { ...robot.position };
 
-    for (let step = 0; step < NAV_STEPS_PER_TICK && idx < navPath.length - 1; step++) {
+    for (
+      let step = 0;
+      step < NAV_STEPS_PER_TICK && idx < navPath.length - 1;
+      step++
+    ) {
       idx++;
       robot.position = this.world.navGrid.navToWorldVec3(navPath[idx]);
       // Stop immediately on floor change (elevator transition)
@@ -199,9 +260,15 @@ export class SimulationEngine {
   }
 
   private onRobotArrived(robot: Robot) {
-    if (!robot.taskId) { robot.status = 'idle'; return; }
+    if (!robot.taskId) {
+      robot.status = 'idle';
+      return;
+    }
     const task = this.world.tasks.get(robot.taskId);
-    if (!task) { robot.status = 'idle'; return; }
+    if (!task) {
+      robot.status = 'idle';
+      return;
+    }
 
     if (robot.status === 'navigating_to_pickup') {
       robot.status = 'picking_up';
@@ -216,20 +283,23 @@ export class SimulationEngine {
     const started = this.robotWaitTick.get(robot.id) ?? this.tick;
     if (this.tick - started < PICKUP_TICKS) return;
 
-    const task   = this.world.tasks.get(robot.taskId!)!;
+    const task = this.world.tasks.get(robot.taskId!)!;
     const parcel = this.world.parcels.get(task.parcelId);
-    if (!parcel) { robot.status = 'idle'; return; }
+    if (!parcel) {
+      robot.status = 'idle';
+      return;
+    }
 
     if (parcel.shelfId) {
       const shelf = this.world.shelves.get(parcel.shelfId)!;
-      const slot  = shelf.slots[parcel.slotRow!]?.[parcel.slotCol!];
+      const slot = shelf.slots[parcel.slotRow!]?.[parcel.slotCol!];
       if (slot) slot.parcelId = undefined;
     }
-    parcel.status      = 'being_carried';
-    parcel.shelfId     = undefined;
-    parcel.carriedBy   = robot.id;
+    parcel.status = 'being_carried';
+    parcel.shelfId = undefined;
+    parcel.carriedBy = robot.id;
     robot.heldParcelId = parcel.id;
-    task.status        = 'in_progress';
+    task.status = 'in_progress';
 
     this.emit('parcel_picked_up', { robotId: robot.id, parcelId: parcel.id });
 
@@ -241,17 +311,19 @@ export class SimulationEngine {
     const started = this.robotWaitTick.get(robot.id) ?? this.tick;
     if (this.tick - started < DROPOFF_TICKS) return;
 
-    const task   = this.world.tasks.get(robot.taskId!)!;
+    const task = this.world.tasks.get(robot.taskId!)!;
     const parcel = this.world.parcels.get(task.parcelId)!;
 
     parcel.carriedBy = undefined;
-    parcel.position  = { ...robot.position };
+    parcel.position = { ...robot.position };
 
     const targetCell = this.world.getCellAtWorld(
-      task.targetPosition.x, task.targetPosition.y, task.targetPosition.floor
+      task.targetPosition.x,
+      task.targetPosition.y,
+      task.targetPosition.floor,
     );
     if (targetCell?.cellType === 'conveyor') {
-      parcel.status   = 'on_conveyor';
+      parcel.status = 'on_conveyor';
       parcel.position = { ...task.targetPosition };
     } else {
       parcel.status = 'delivered';
@@ -259,31 +331,41 @@ export class SimulationEngine {
 
     if (task.targetShelfId) {
       const shelf = this.world.shelves.get(task.targetShelfId);
-      if (shelf && task.targetSlotRow !== undefined && task.targetSlotCol !== undefined) {
+      if (
+        shelf &&
+        task.targetSlotRow !== undefined &&
+        task.targetSlotCol !== undefined
+      ) {
         parcel.shelfId = shelf.id;
         parcel.slotRow = task.targetSlotRow;
         parcel.slotCol = task.targetSlotCol;
-        parcel.status  = 'on_shelf';
-        shelf.slots[task.targetSlotRow][task.targetSlotCol].parcelId = parcel.id;
+        parcel.status = 'on_shelf';
+        shelf.slots[task.targetSlotRow][task.targetSlotCol].parcelId =
+          parcel.id;
       }
     }
 
     robot.heldParcelId = undefined;
-    task.status        = 'completed';
-    task.completedAt   = this.tick;
-    robot.taskId       = undefined;
-    robot.status       = 'idle';
+    task.status = 'completed';
+    task.completedAt = this.tick;
+    robot.taskId = undefined;
+    robot.status = 'idle';
 
     this.emit('parcel_dropped_off', { robotId: robot.id, parcelId: parcel.id });
-    this.emit('task_completed',     { taskId: task.id });
+    this.emit('task_completed', { taskId: task.id });
   }
 
   private handleInElevator(robot: Robot) {
     const started = this.robotWaitTick.get(robot.id) ?? this.tick;
     if (this.tick - started < ELEVATOR_TICKS) return;
     const task = this.world.tasks.get(robot.taskId ?? '');
-    if (!task) { robot.status = 'idle'; return; }
-    robot.status = robot.heldParcelId ? 'navigating_to_dropoff' : 'navigating_to_pickup';
+    if (!task) {
+      robot.status = 'idle';
+      return;
+    }
+    robot.status = robot.heldParcelId
+      ? 'navigating_to_dropoff'
+      : 'navigating_to_pickup';
   }
 
   private handleWaitElevator(robot: Robot) {
@@ -297,9 +379,9 @@ export class SimulationEngine {
     for (const elev of this.world.elevators.values()) {
       if (elev.status === 'moving_up' || elev.status === 'moving_down') {
         if (elev.targetFloor !== undefined) {
-          elev.currentFloor  = elev.targetFloor;
-          elev.targetFloor   = undefined;
-          elev.status        = 'doors_open';
+          elev.currentFloor = elev.targetFloor;
+          elev.targetFloor = undefined;
+          elev.status = 'doors_open';
           elev.doorsOpenTick = this.tick;
         }
       } else if (elev.status === 'doors_open') {
@@ -320,7 +402,7 @@ export class SimulationEngine {
       // Iterate in reverse so a parcel that just moved to cell i+1
       // is not moved again when we reach that cell.
       for (let i = conv.cells.length - 1; i >= 0; i--) {
-        const cell   = conv.cells[i];
+        const cell = conv.cells[i];
         const parcel = this.findParcelAt(cell.x, cell.y, cell.floor);
         if (!parcel || parcel.status !== 'on_conveyor') continue;
 
@@ -334,11 +416,137 @@ export class SimulationEngine {
     }
   }
 
-  private findParcelAt(x: number, y: number, floor: number): Parcel | undefined {
+  private findParcelAt(
+    x: number,
+    y: number,
+    floor: number,
+  ): Parcel | undefined {
     for (const p of this.world.parcels.values()) {
-      if (p.position?.x === x && p.position?.y === y && p.position?.floor === floor) return p;
+      if (
+        p.position?.x === x &&
+        p.position?.y === y &&
+        p.position?.floor === floor
+      )
+        return p;
     }
     return undefined;
+  }
+
+  // ── Perpetual task generation ──────────────────────────
+
+  private readonly PARCEL_COLORS = [
+    '#e74c3c',
+    '#e67e22',
+    '#f1c40f',
+    '#2ecc71',
+    '#1abc9c',
+    '#3498db',
+    '#9b59b6',
+    '#e91e8c',
+    '#00bcd4',
+    '#ff5722',
+  ];
+
+  private generatePerpetualTasks() {
+    const conv = this.outboundConveyorId
+      ? this.world.conveyors.get(this.outboundConveyorId)
+      : undefined;
+    if (!conv) return;
+
+    // Count active work to avoid flooding
+    const activeTasks = [...this.world.tasks.values()].filter(
+      (t) =>
+        t.status === 'queued' ||
+        t.status === 'assigned' ||
+        t.status === 'in_progress',
+    ).length;
+    const robotCount = this.world.robots.size;
+    const maxQueue = robotCount * 2;
+
+    // Create picking tasks (shelf → outbound conveyor entry)
+    if (activeTasks < maxQueue) {
+      this.tryCreatePickingTask(conv);
+    }
+
+    // Restock shelves periodically so there are always parcels to pick
+    if (this.tick % 15 === 0) {
+      this.restockShelf();
+    }
+  }
+
+  private tryCreatePickingTask(outbound: {
+    id: string;
+    cells: { x: number; y: number; floor: number }[];
+  }) {
+    const entryCell = outbound.cells[0];
+    // Don't place if entry cell is already occupied
+    if (this.findParcelAt(entryCell.x, entryCell.y, entryCell.floor)) return;
+
+    // Find a random occupied shelf slot with no pending task
+    const parcelIds = new Set(
+      [...this.world.tasks.values()]
+        .filter((t) => t.status !== 'completed' && t.status !== 'failed')
+        .map((t) => t.parcelId),
+    );
+
+    const candidates: Parcel[] = [];
+    for (const p of this.world.parcels.values()) {
+      if (p.status === 'on_shelf' && !parcelIds.has(p.id)) candidates.push(p);
+    }
+
+    if (candidates.length === 0) return;
+
+    const parcel = candidates[Math.floor(Math.random() * candidates.length)];
+    const taskId = `perp-task-${++this.perpetualTaskCounter}`;
+    const task: TransferTask = {
+      id: taskId,
+      parcelId: parcel.id,
+      targetPosition: {
+        x: entryCell.x,
+        y: entryCell.y,
+        floor: entryCell.floor,
+      },
+      status: 'queued',
+      createdAt: this.tick,
+    };
+    this.world.tasks.set(taskId, task);
+  }
+
+  private restockShelf() {
+    const shelves = [...this.world.shelves.values()];
+    if (shelves.length === 0) return;
+
+    // Find a shelf with empty slots (prefer shelves with few parcels)
+    const withEmpty = shelves
+      .map((s) => ({
+        shelf: s,
+        emptySlots: s.slots.flat().filter((sl) => !sl.parcelId),
+      }))
+      .filter((e) => e.emptySlots.length > 0);
+
+    if (withEmpty.length === 0) return;
+
+    // Pick the shelf with the most empty slots (most depleted)
+    withEmpty.sort((a, b) => b.emptySlots.length - a.emptySlots.length);
+    const { shelf, emptySlots } = withEmpty[0];
+    const slot = emptySlots[Math.floor(Math.random() * emptySlots.length)];
+
+    const parcelId = `perp-parcel-${++this.perpetualParcelCounter}`;
+    const color =
+      this.PARCEL_COLORS[
+        this.perpetualParcelCounter % this.PARCEL_COLORS.length
+      ];
+    const parcel: Parcel = {
+      id: parcelId,
+      label: `P${this.perpetualParcelCounter}`,
+      color,
+      status: 'on_shelf',
+      shelfId: shelf.id,
+      slotRow: slot.row,
+      slotCol: slot.col,
+    };
+    slot.parcelId = parcelId;
+    this.world.parcels.set(parcelId, parcel);
   }
 
   private emit(type: SimEvent['type'], data: Record<string, unknown>) {

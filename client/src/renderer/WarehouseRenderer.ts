@@ -131,6 +131,9 @@ export class WarehouseRenderer {
   private elevatorMeshes = new Map<string, THREE.Group>();
   private conveyorBelts: THREE.Mesh[] = []; // for UV scroll animation
   private activeFloor = 0;
+  private ticksPerSecond = 5;
+  // keyed "x,y,floor" → speedTicks for that conveyor
+  private conveyorCellSpeedTicks = new Map<string, number>();
 
   constructor(sm: SceneManager) {
     this.sm = sm;
@@ -161,6 +164,14 @@ export class WarehouseRenderer {
     this.parcelMeshes.clear();
     this.elevatorMeshes.clear();
     this.conveyorBelts = [];
+    this.conveyorCellSpeedTicks.clear();
+    this.ticksPerSecond = state.ticksPerSecond || 5;
+
+    for (const c of state.conveyors) {
+      for (const cell of c.cells) {
+        this.conveyorCellSpeedTicks.set(`${cell.x},${cell.y},${cell.floor}`, c.speedTicks);
+      }
+    }
 
     this.buildFloors(state.config);
     for (const w of state.walls) this.addWall(w);
@@ -200,6 +211,14 @@ export class WarehouseRenderer {
           group.position.y += 0.56;
           group.userData.floor = robot.userData.floor;
         }
+      } else if (group.userData.onConveyor && group.userData.convCellFrom) {
+        // Time-based interpolation: parcel glides continuously between cells
+        const from = group.userData.convCellFrom as THREE.Vector3;
+        const to   = group.userData.convCellTo   as THREE.Vector3;
+        const elapsed = performance.now() - (group.userData.convCellStartMs as number);
+        const period  = group.userData.convCellPeriodMs as number;
+        const t = Math.min(elapsed / period, 1.0);
+        group.position.lerpVectors(from, to, t);
       } else {
         const target = group.userData.targetPos as THREE.Vector3 | null;
         if (target) group.position.lerp(target, Math.min(dt * speed, 1));
@@ -212,10 +231,10 @@ export class WarehouseRenderer {
       const mat = mesh.material as THREE.MeshLambertMaterial;
       if (mat.map) {
         const dir = mesh.userData.direction as ConveyorDir;
-        if (dir === 'E') mat.map.offset.x += dt * beltSpeed;
-        if (dir === 'W') mat.map.offset.x -= dt * beltSpeed;
-        if (dir === 'S') mat.map.offset.y -= dt * beltSpeed;
-        if (dir === 'N') mat.map.offset.y += dt * beltSpeed;
+        if (dir === 'E') mat.map.offset.x -= dt * beltSpeed;
+        if (dir === 'W') mat.map.offset.x += dt * beltSpeed;
+        if (dir === 'S') mat.map.offset.y += dt * beltSpeed;
+        if (dir === 'N') mat.map.offset.y -= dt * beltSpeed;
         mat.map.needsUpdate = true;
       }
     }
@@ -405,6 +424,12 @@ export class WarehouseRenderer {
 
     const base = cellPos(sp.x, sp.y, sp.floor);
     group.position.copy(base);
+
+    // Rotate so open face points toward the access aisle
+    const facing = s.facing ?? 'E';
+    if (facing === 'S') group.rotation.y = Math.PI;       // body south → face north
+    if (facing === 'W') group.rotation.y = -Math.PI / 2;  // body west  → face east
+
     this.worldGroup.add(group);
   }
 
@@ -832,6 +857,7 @@ export class WarehouseRenderer {
 
     if (p.status === 'being_carried' && p.carriedBy) {
       mesh.userData.carriedBy = p.carriedBy;
+      mesh.userData.onConveyor = false;
       const robot = this.robotMeshes.get(p.carriedBy);
       if (robot) {
         mesh.userData.floor = robot.userData.floor;
@@ -843,8 +869,25 @@ export class WarehouseRenderer {
       if (!mesh.userData.targetPos) {
         // First placement — snap immediately
         mesh.position.copy(pos);
+        mesh.userData.targetPos = pos.clone();
+      } else if (p.status === 'on_conveyor') {
+        const prevTarget = mesh.userData.targetPos as THREE.Vector3;
+        const moved = prevTarget.distanceTo(pos) > 0.01;
+        if (moved) {
+          const key = `${p.position.x},${p.position.y},${p.position.floor}`;
+          const speedTicks = this.conveyorCellSpeedTicks.get(key) ?? 2;
+          const periodMs = (speedTicks / this.ticksPerSecond) * 1000;
+          mesh.userData.convCellFrom = prevTarget.clone();
+          mesh.userData.convCellTo = pos.clone();
+          mesh.userData.convCellStartMs = performance.now();
+          mesh.userData.convCellPeriodMs = periodMs;
+        }
+        mesh.userData.targetPos = pos.clone();
+        mesh.userData.onConveyor = true;
+      } else {
+        mesh.userData.onConveyor = false;
+        mesh.userData.targetPos = pos.clone();
       }
-      mesh.userData.targetPos = pos.clone();
       mesh.userData.floor = p.position.floor;
     } else if (p.shelfId) {
       mesh.userData.carriedBy = null;

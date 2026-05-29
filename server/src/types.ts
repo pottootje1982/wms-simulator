@@ -84,6 +84,7 @@ export interface Shelf {
   rows: number;
   cols: number;
   slots: ShelfSlot[][];
+  facing?: 'E' | 'W' | 'N' | 'S'; // direction from access → body (default 'E')
 }
 
 // ── Elevator ──────────────────────────────────────────────

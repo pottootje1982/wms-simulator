@@ -25,7 +25,10 @@ export function registerRoutes(
   engine: SimulationEngine,
   hub: WSHub,
 ) {
+  let batchMode = false;
+
   const broadcastFull = () => {
+    if (batchMode) return;
     hub.broadcast({
       type: 'full_state',
       payload: world.toFullState(
@@ -82,6 +85,30 @@ export function registerRoutes(
     return { ok: true };
   });
 
+  app.post(
+    '/api/sim/perpetual',
+    async (req: FastifyRequest<{ Body: { outboundConveyorId: string } }>) => {
+      engine.enablePerpetual(req.body.outboundConveyorId);
+      return { ok: true };
+    },
+  );
+
+  app.post('/api/sim/perpetual/stop', async () => {
+    engine.disablePerpetual();
+    return { ok: true };
+  });
+
+  app.post('/api/world/begin-batch', async () => {
+    batchMode = true;
+    return { ok: true };
+  });
+
+  app.post('/api/world/end-batch', async () => {
+    batchMode = false;
+    broadcastFull();
+    return { ok: true };
+  });
+
   app.get('/api/sim/state', async () =>
     world.toFullState(engine.tick, engine.running, engine.ticksPerSecond),
   );
@@ -102,7 +129,7 @@ export function registerRoutes(
       }>,
       reply,
     ) => {
-      const { label, x, y, floor, rows, cols } = req.body;
+      const { label, x, y, floor, rows, cols, facing = 'E' } = req.body;
       if (
         x === undefined ||
         y === undefined ||
@@ -114,8 +141,10 @@ export function registerRoutes(
           .status(400)
           .send({ error: 'x/y/floor/rows/cols required' });
 
-      // Shelf body 1.0 world unit east of the access aisle position
-      const shelfX = x + 1.0;
+      const dx = facing === 'W' ? -1 : (facing === 'N' || facing === 'S') ? 0 : 1;
+      const dy = facing === 'S' ? 1 : facing === 'N' ? -1 : 0;
+      const shelfX = x + dx;
+      const shelfY = y + dy;
       const slots: ShelfSlot[][] = Array.from({ length: rows }, (_, r) =>
         Array.from({ length: cols }, (_, c) => ({ row: r, col: c })),
       );
@@ -124,10 +153,11 @@ export function registerRoutes(
         id,
         label: label ?? id,
         accessPosition: { x, y, floor },
-        shelfPosition: { x: shelfX, y, floor },
+        shelfPosition: { x: shelfX, y: shelfY, floor },
         rows,
         cols,
         slots,
+        facing,
       };
       world.shelves.set(id, shelf);
       world.placeShelf(shelf);
