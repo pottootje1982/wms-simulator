@@ -3,13 +3,17 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
 export class SceneManager {
   renderer: THREE.WebGLRenderer;
-  scene   : THREE.Scene;
-  camera  : THREE.PerspectiveCamera;
+  scene: THREE.Scene;
+  camera: THREE.PerspectiveCamera;
   controls: OrbitControls;
   private raf = 0;
 
   constructor(canvas: HTMLCanvasElement) {
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+    this.renderer = new THREE.WebGLRenderer({
+      canvas,
+      antialias: true,
+      alpha: false,
+    });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -25,8 +29,8 @@ export class SceneManager {
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.07;
-    this.controls.minDistance   = 4;
-    this.controls.maxDistance   = 110;
+    this.controls.minDistance = 4;
+    this.controls.maxDistance = 110;
     this.controls.maxPolarAngle = Math.PI / 2 - 0.04;
 
     this.setupLights();
@@ -45,9 +49,9 @@ export class SceneManager {
     sun.castShadow = true;
     sun.shadow.mapSize.setScalar(2048);
     sun.shadow.camera.near = 1;
-    sun.shadow.camera.far  = 200;
+    sun.shadow.camera.far = 200;
     sun.shadow.camera.left = sun.shadow.camera.bottom = -70;
-    sun.shadow.camera.right = sun.shadow.camera.top   =  70;
+    sun.shadow.camera.right = sun.shadow.camera.top = 70;
     sun.shadow.bias = -0.0003;
     this.scene.add(sun);
 
@@ -78,5 +82,7 @@ export class SceneManager {
     this.raf = requestAnimationFrame(loop);
   }
 
-  stopLoop() { cancelAnimationFrame(this.raf); }
+  stopLoop() {
+    cancelAnimationFrame(this.raf);
+  }
 }

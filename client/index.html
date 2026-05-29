@@ -1,262 +1,628 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>WMS Simulator</title>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background: #bdd5de; color: #e2e8f0; font-family: 'Segoe UI', system-ui, sans-serif; display: flex; height: 100vh; overflow: hidden; }
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WMS Simulator</title>
+    <style>
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        background: #bdd5de;
+        color: #e2e8f0;
+        font-family: 'Segoe UI', system-ui, sans-serif;
+        display: flex;
+        height: 100vh;
+        overflow: hidden;
+      }
 
-    #canvas-container { flex: 1; position: relative; }
-    #canvas-container canvas { width: 100% !important; height: 100% !important; display: block; }
+      #canvas-container {
+        flex: 1;
+        position: relative;
+      }
+      #canvas-container canvas {
+        width: 100% !important;
+        height: 100% !important;
+        display: block;
+      }
 
-    /* HUD */
-    #hud {
-      position: absolute; top: 12px; left: 12px;
-      background: rgba(255,255,255,0.88); border: 1px solid #c8d4d9;
-      border-radius: 8px; padding: 10px 14px; min-width: 180px;
-      backdrop-filter: blur(6px); pointer-events: none;
-      color: #1e293b; box-shadow: 0 2px 8px rgba(0,0,0,0.12);
-    }
-    #hud h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #5a7080; margin-bottom: 6px; }
-    .hud-row { display: flex; justify-content: space-between; font-size: 12px; margin: 2px 0; color: #374151; }
-    .hud-val { color: #0369a1; font-weight: 700; }
-    .hud-badge { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 700; margin-right: 4px; }
-    .badge-idle { background: #dbeafe; color: #1d4ed8; }
-    .badge-busy { background: #fef3c7; color: #b45309; }
-    .badge-done { background: #dcfce7; color: #15803d; }
+      /* HUD */
+      #hud {
+        position: absolute;
+        top: 12px;
+        left: 12px;
+        background: rgba(255, 255, 255, 0.88);
+        border: 1px solid #c8d4d9;
+        border-radius: 8px;
+        padding: 10px 14px;
+        min-width: 180px;
+        backdrop-filter: blur(6px);
+        pointer-events: none;
+        color: #1e293b;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+      }
+      #hud h3 {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        color: #5a7080;
+        margin-bottom: 6px;
+      }
+      .hud-row {
+        display: flex;
+        justify-content: space-between;
+        font-size: 12px;
+        margin: 2px 0;
+        color: #374151;
+      }
+      .hud-val {
+        color: #0369a1;
+        font-weight: 700;
+      }
+      .hud-badge {
+        display: inline-block;
+        padding: 1px 6px;
+        border-radius: 4px;
+        font-size: 10px;
+        font-weight: 700;
+        margin-right: 4px;
+      }
+      .badge-idle {
+        background: #dbeafe;
+        color: #1d4ed8;
+      }
+      .badge-busy {
+        background: #fef3c7;
+        color: #b45309;
+      }
+      .badge-done {
+        background: #dcfce7;
+        color: #15803d;
+      }
 
-    /* Floor selector */
-    #floor-selector {
-      position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
-      display: flex; gap: 6px;
-    }
-    .floor-btn {
-      background: rgba(255,255,255,0.85); border: 1px solid #c8d4d9;
-      color: #374151; padding: 6px 14px; border-radius: 6px; cursor: pointer;
-      font-size: 12px; font-weight: 600; transition: all 0.15s;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.10);
-    }
-    .floor-btn:hover, .floor-btn.active { background: #0284c7; border-color: #0284c7; color: #fff; }
+      /* Floor selector */
+      #floor-selector {
+        position: absolute;
+        bottom: 16px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        gap: 6px;
+      }
+      .floor-btn {
+        background: rgba(255, 255, 255, 0.85);
+        border: 1px solid #c8d4d9;
+        color: #374151;
+        padding: 6px 14px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 600;
+        transition: all 0.15s;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
+      }
+      .floor-btn:hover,
+      .floor-btn.active {
+        background: #0284c7;
+        border-color: #0284c7;
+        color: #fff;
+      }
 
-    /* Side panel */
-    #panel {
-      width: 320px; background: #1e293b; border-left: 1px solid #334155;
-      display: flex; flex-direction: column; overflow: hidden;
-    }
-    #panel-header {
-      padding: 14px 16px; border-bottom: 1px solid #334155;
-      font-weight: 700; font-size: 15px; color: #f1f5f9;
-      display: flex; align-items: center; gap: 8px;
-    }
-    #panel-tabs {
-      display: flex; border-bottom: 1px solid #334155;
-    }
-    .tab-btn {
-      flex: 1; padding: 8px 4px; background: none; border: none;
-      color: #64748b; font-size: 12px; cursor: pointer; transition: all 0.15s;
-      border-bottom: 2px solid transparent;
-    }
-    .tab-btn.active { color: #38bdf8; border-bottom-color: #38bdf8; }
-    .tab-btn:hover:not(.active) { color: #94a3b8; }
+      /* Side panel */
+      #panel {
+        width: 320px;
+        background: #1e293b;
+        border-left: 1px solid #334155;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      #panel-header {
+        padding: 14px 16px;
+        border-bottom: 1px solid #334155;
+        font-weight: 700;
+        font-size: 15px;
+        color: #f1f5f9;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      #panel-tabs {
+        display: flex;
+        border-bottom: 1px solid #334155;
+      }
+      .tab-btn {
+        flex: 1;
+        padding: 8px 4px;
+        background: none;
+        border: none;
+        color: #64748b;
+        font-size: 12px;
+        cursor: pointer;
+        transition: all 0.15s;
+        border-bottom: 2px solid transparent;
+      }
+      .tab-btn.active {
+        color: #38bdf8;
+        border-bottom-color: #38bdf8;
+      }
+      .tab-btn:hover:not(.active) {
+        color: #94a3b8;
+      }
 
-    #panel-body { flex: 1; overflow-y: auto; padding: 12px; }
-    .tab-pane { display: none; }
-    .tab-pane.active { display: block; }
+      #panel-body {
+        flex: 1;
+        overflow-y: auto;
+        padding: 12px;
+      }
+      .tab-pane {
+        display: none;
+      }
+      .tab-pane.active {
+        display: block;
+      }
 
-    .form-group { margin-bottom: 10px; }
-    .form-group label { display: block; font-size: 11px; color: #64748b; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
-    .form-group input, .form-group select {
-      width: 100%; background: #0f172a; border: 1px solid #334155;
-      color: #e2e8f0; padding: 6px 8px; border-radius: 6px; font-size: 13px;
-    }
-    .form-group input:focus, .form-group select:focus { outline: none; border-color: #38bdf8; }
-    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-    .form-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+      .form-group {
+        margin-bottom: 10px;
+      }
+      .form-group label {
+        display: block;
+        font-size: 11px;
+        color: #64748b;
+        margin-bottom: 4px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+      .form-group input,
+      .form-group select {
+        width: 100%;
+        background: #0f172a;
+        border: 1px solid #334155;
+        color: #e2e8f0;
+        padding: 6px 8px;
+        border-radius: 6px;
+        font-size: 13px;
+      }
+      .form-group input:focus,
+      .form-group select:focus {
+        outline: none;
+        border-color: #38bdf8;
+      }
+      .form-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+      .form-row-3 {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 8px;
+      }
 
-    .btn { width: 100%; padding: 8px; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.15s; margin-top: 4px; }
-    .btn-primary { background: #0ea5e9; color: #fff; }
-    .btn-primary:hover { background: #0284c7; }
-    .btn-success { background: #10b981; color: #fff; }
-    .btn-success:hover { background: #059669; }
-    .btn-danger  { background: #ef4444; color: #fff; }
-    .btn-danger:hover  { background: #dc2626; }
-    .btn-warning { background: #f59e0b; color: #000; }
-    .btn-warning:hover { background: #d97706; }
-    .btn-sm { padding: 4px 8px; font-size: 11px; width: auto; margin: 2px; }
+      .btn {
+        width: 100%;
+        padding: 8px;
+        border: none;
+        border-radius: 6px;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.15s;
+        margin-top: 4px;
+      }
+      .btn-primary {
+        background: #0ea5e9;
+        color: #fff;
+      }
+      .btn-primary:hover {
+        background: #0284c7;
+      }
+      .btn-success {
+        background: #10b981;
+        color: #fff;
+      }
+      .btn-success:hover {
+        background: #059669;
+      }
+      .btn-danger {
+        background: #ef4444;
+        color: #fff;
+      }
+      .btn-danger:hover {
+        background: #dc2626;
+      }
+      .btn-warning {
+        background: #f59e0b;
+        color: #000;
+      }
+      .btn-warning:hover {
+        background: #d97706;
+      }
+      .btn-sm {
+        padding: 4px 8px;
+        font-size: 11px;
+        width: auto;
+        margin: 2px;
+      }
 
-    .section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #64748b; margin: 12px 0 6px; border-top: 1px solid #334155; padding-top: 10px; }
-    .section-title:first-child { border-top: none; padding-top: 0; margin-top: 0; }
+      .section-title {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        color: #64748b;
+        margin: 12px 0 6px;
+        border-top: 1px solid #334155;
+        padding-top: 10px;
+      }
+      .section-title:first-child {
+        border-top: none;
+        padding-top: 0;
+        margin-top: 0;
+      }
 
-    .entity-list { list-style: none; }
-    .entity-item {
-      display: flex; align-items: center; justify-content: space-between;
-      padding: 6px 8px; border-radius: 6px; margin: 2px 0;
-      background: #0f172a; font-size: 12px;
-    }
-    .entity-item .dot { width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; flex-shrink: 0; }
-    .entity-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .entity-status { font-size: 10px; color: #64748b; margin-left: 6px; }
+      .entity-list {
+        list-style: none;
+      }
+      .entity-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 6px 8px;
+        border-radius: 6px;
+        margin: 2px 0;
+        background: #0f172a;
+        font-size: 12px;
+      }
+      .entity-item .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        margin-right: 8px;
+        flex-shrink: 0;
+      }
+      .entity-name {
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .entity-status {
+        font-size: 10px;
+        color: #64748b;
+        margin-left: 6px;
+      }
 
-    .task-item {
-      background: #0f172a; border-radius: 6px; padding: 8px; margin: 4px 0; font-size: 11px;
-      border-left: 3px solid #334155;
-    }
-    .task-item.queued    { border-color: #64748b; }
-    .task-item.assigned  { border-color: #f59e0b; }
-    .task-item.in_progress { border-color: #3b82f6; }
-    .task-item.completed { border-color: #10b981; }
-    .task-item.failed    { border-color: #ef4444; }
-    .task-row { display: flex; justify-content: space-between; margin: 2px 0; color: #94a3b8; }
-    .task-row span:last-child { color: #e2e8f0; }
+      .task-item {
+        background: #0f172a;
+        border-radius: 6px;
+        padding: 8px;
+        margin: 4px 0;
+        font-size: 11px;
+        border-left: 3px solid #334155;
+      }
+      .task-item.queued {
+        border-color: #64748b;
+      }
+      .task-item.assigned {
+        border-color: #f59e0b;
+      }
+      .task-item.in_progress {
+        border-color: #3b82f6;
+      }
+      .task-item.completed {
+        border-color: #10b981;
+      }
+      .task-item.failed {
+        border-color: #ef4444;
+      }
+      .task-row {
+        display: flex;
+        justify-content: space-between;
+        margin: 2px 0;
+        color: #94a3b8;
+      }
+      .task-row span:last-child {
+        color: #e2e8f0;
+      }
 
-    .sim-controls { display: flex; gap: 6px; }
-    .sim-controls .btn { margin-top: 0; }
+      .sim-controls {
+        display: flex;
+        gap: 6px;
+      }
+      .sim-controls .btn {
+        margin-top: 0;
+      }
 
-    #log {
-      font-size: 10px; font-family: monospace; color: #64748b;
-      max-height: 120px; overflow-y: auto; background: #0f172a;
-      border-radius: 6px; padding: 6px; margin-top: 8px;
-    }
-    .log-line { margin: 1px 0; }
-    .log-event { color: #4ade80; }
-    .log-error { color: #f87171; }
-  </style>
-</head>
-<body>
-  <div id="canvas-container">
-    <canvas id="three-canvas"></canvas>
-    <div id="hud">
-      <h3>WMS Simulator</h3>
-      <div class="hud-row"><span>Tick</span><span class="hud-val" id="hud-tick">0</span></div>
-      <div class="hud-row"><span>Status</span><span class="hud-val" id="hud-status">Paused</span></div>
-      <div class="hud-row"><span>Robots</span><span class="hud-val" id="hud-robots">0</span></div>
-      <div class="hud-row"><span>Tasks</span><span class="hud-val" id="hud-tasks">0 / 0</span></div>
-      <div class="hud-row"><span>Floor</span><span class="hud-val" id="hud-floor">0</span></div>
-    </div>
-    <div id="floor-selector"></div>
-  </div>
-
-  <div id="panel">
-    <div id="panel-header">
-      <span>&#x1F3ED;</span> WMS Simulator
-    </div>
-    <div id="panel-tabs">
-      <button class="tab-btn active" data-tab="configure">Configure</button>
-      <button class="tab-btn" data-tab="entities">Entities</button>
-      <button class="tab-btn" data-tab="commands">Commands</button>
-      <button class="tab-btn" data-tab="status">Status</button>
-    </div>
-    <div id="panel-body">
-
-      <!-- CONFIGURE TAB -->
-      <div class="tab-pane active" id="tab-configure">
-        <div class="section-title">World</div>
-        <div class="form-row-3">
-          <div class="form-group"><label>Width</label><input type="number" id="cfg-width" value="20" min="5" max="100"/></div>
-          <div class="form-group"><label>Depth</label><input type="number" id="cfg-depth" value="15" min="5" max="100"/></div>
-          <div class="form-group"><label>Floors</label><input type="number" id="cfg-floors" value="2" min="1" max="5"/></div>
+      #log {
+        font-size: 10px;
+        font-family: monospace;
+        color: #64748b;
+        max-height: 120px;
+        overflow-y: auto;
+        background: #0f172a;
+        border-radius: 6px;
+        padding: 6px;
+        margin-top: 8px;
+      }
+      .log-line {
+        margin: 1px 0;
+      }
+      .log-event {
+        color: #4ade80;
+      }
+      .log-error {
+        color: #f87171;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="canvas-container">
+      <canvas id="three-canvas"></canvas>
+      <div id="hud">
+        <h3>WMS Simulator</h3>
+        <div class="hud-row">
+          <span>Tick</span><span class="hud-val" id="hud-tick">0</span>
         </div>
-        <button class="btn btn-primary" id="btn-create-world">Create World</button>
-        <button class="btn btn-danger" id="btn-reset-world" style="margin-top:6px">Reset World</button>
-
-        <div class="section-title">Simulation</div>
-        <div class="form-group"><label>Ticks/second</label><input type="number" id="cfg-tps" value="5" min="1" max="20"/></div>
-        <div class="sim-controls">
-          <button class="btn btn-success" id="btn-sim-start">&#x25B6; Start</button>
-          <button class="btn btn-warning" id="btn-sim-pause">&#x23F8; Pause</button>
-          <button class="btn btn-danger"  id="btn-sim-reset">&#x21BA; Reset</button>
+        <div class="hud-row">
+          <span>Status</span><span class="hud-val" id="hud-status">Paused</span>
         </div>
-
-        <div class="section-title">Quick Demo</div>
-        <button class="btn btn-primary" id="btn-demo">Load Demo Warehouse</button>
+        <div class="hud-row">
+          <span>Robots</span><span class="hud-val" id="hud-robots">0</span>
+        </div>
+        <div class="hud-row">
+          <span>Tasks</span><span class="hud-val" id="hud-tasks">0 / 0</span>
+        </div>
+        <div class="hud-row">
+          <span>Floor</span><span class="hud-val" id="hud-floor">0</span>
+        </div>
       </div>
-
-      <!-- ENTITIES TAB -->
-      <div class="tab-pane" id="tab-entities">
-
-        <div class="section-title">Add Shelf</div>
-        <div class="form-group"><label>Label</label><input type="text" id="shelf-label" placeholder="Shelf A1"/></div>
-        <div class="form-row-3">
-          <div class="form-group"><label>X</label><input type="number" id="shelf-x" value="2"/></div>
-          <div class="form-group"><label>Y</label><input type="number" id="shelf-y" value="2"/></div>
-          <div class="form-group"><label>Floor</label><input type="number" id="shelf-floor" value="0"/></div>
-        </div>
-        <div class="form-row">
-          <div class="form-group"><label>Rows</label><input type="number" id="shelf-rows" value="3" min="1"/></div>
-          <div class="form-group"><label>Cols</label><input type="number" id="shelf-cols" value="4" min="1"/></div>
-        </div>
-        <button class="btn btn-primary" id="btn-add-shelf">Add Shelf</button>
-
-        <div class="section-title">Add Robot</div>
-        <div class="form-group"><label>Name</label><input type="text" id="robot-name" placeholder="R1"/></div>
-        <div class="form-row-3">
-          <div class="form-group"><label>X</label><input type="number" id="robot-x" value="0"/></div>
-          <div class="form-group"><label>Y</label><input type="number" id="robot-y" value="0"/></div>
-          <div class="form-group"><label>Floor</label><input type="number" id="robot-floor" value="0"/></div>
-        </div>
-        <div class="form-group"><label>Color</label><input type="color" id="robot-color" value="#f59e0b" style="height:32px;cursor:pointer"/></div>
-        <button class="btn btn-primary" id="btn-add-robot">Add Robot</button>
-
-        <div class="section-title">Add Elevator</div>
-        <div class="form-row">
-          <div class="form-group"><label>X</label><input type="number" id="elev-x" value="10"/></div>
-          <div class="form-group"><label>Y</label><input type="number" id="elev-y" value="7"/></div>
-        </div>
-        <div class="form-group"><label>Floors (comma-separated)</label><input type="text" id="elev-floors" value="0,1"/></div>
-        <button class="btn btn-primary" id="btn-add-elevator">Add Elevator</button>
-
-        <div class="section-title">Add Wall Cells</div>
-        <div class="form-group"><label>Cells JSON (array of {x,y,floor})</label>
-          <input type="text" id="wall-cells" placeholder='[{"x":5,"y":0,"floor":0}]'/>
-        </div>
-        <button class="btn btn-primary" id="btn-add-walls">Add Walls</button>
-
-        <div class="section-title">Add Parcel to Shelf</div>
-        <div class="form-group"><label>Shelf ID</label><input type="text" id="parcel-shelf-id" placeholder="shelf id"/></div>
-        <div class="form-row">
-          <div class="form-group"><label>Row</label><input type="number" id="parcel-row" value="0" min="0"/></div>
-          <div class="form-group"><label>Col</label><input type="number" id="parcel-col" value="0" min="0"/></div>
-        </div>
-        <div class="form-group"><label>Label</label><input type="text" id="parcel-label" placeholder="PKG-001"/></div>
-        <button class="btn btn-primary" id="btn-add-parcel">Add Parcel</button>
-
-        <div class="section-title">Current Entities</div>
-        <ul class="entity-list" id="entity-list"></ul>
-      </div>
-
-      <!-- COMMANDS TAB -->
-      <div class="tab-pane" id="tab-commands">
-        <div class="section-title">Transfer Parcel</div>
-        <div class="form-group"><label>Parcel ID</label><input type="text" id="cmd-parcel-id" placeholder="parcel id"/></div>
-        <div class="form-row-3">
-          <div class="form-group"><label>Target X</label><input type="number" id="cmd-tx" value="5"/></div>
-          <div class="form-group"><label>Target Y</label><input type="number" id="cmd-ty" value="5"/></div>
-          <div class="form-group"><label>Floor</label><input type="number" id="cmd-tfloor" value="0"/></div>
-        </div>
-        <div class="form-group"><label>Target Shelf ID (optional)</label><input type="text" id="cmd-shelf-id" placeholder="optional"/></div>
-        <div class="form-row">
-          <div class="form-group"><label>Slot Row</label><input type="number" id="cmd-srow" value="0"/></div>
-          <div class="form-group"><label>Slot Col</label><input type="number" id="cmd-scol" value="0"/></div>
-        </div>
-        <button class="btn btn-success" id="btn-issue-transfer">Issue Transfer</button>
-
-        <div class="section-title">Task Queue</div>
-        <div id="task-list"></div>
-      </div>
-
-      <!-- STATUS TAB -->
-      <div class="tab-pane" id="tab-status">
-        <div class="section-title">Robots</div>
-        <ul class="entity-list" id="robot-status-list"></ul>
-        <div class="section-title">Event Log</div>
-        <div id="log"></div>
-      </div>
-
+      <div id="floor-selector"></div>
     </div>
-  </div>
 
-  <script type="module" src="/src/main.ts"></script>
-</body>
+    <div id="panel">
+      <div id="panel-header"><span>&#x1F3ED;</span> WMS Simulator</div>
+      <div id="panel-tabs">
+        <button class="tab-btn active" data-tab="configure">Configure</button>
+        <button class="tab-btn" data-tab="entities">Entities</button>
+        <button class="tab-btn" data-tab="commands">Commands</button>
+        <button class="tab-btn" data-tab="status">Status</button>
+      </div>
+      <div id="panel-body">
+        <!-- CONFIGURE TAB -->
+        <div class="tab-pane active" id="tab-configure">
+          <div class="section-title">World</div>
+          <div class="form-row-3">
+            <div class="form-group">
+              <label>Width</label
+              ><input
+                type="number"
+                id="cfg-width"
+                value="20"
+                min="5"
+                max="100"
+              />
+            </div>
+            <div class="form-group">
+              <label>Depth</label
+              ><input
+                type="number"
+                id="cfg-depth"
+                value="15"
+                min="5"
+                max="100"
+              />
+            </div>
+            <div class="form-group">
+              <label>Floors</label
+              ><input type="number" id="cfg-floors" value="2" min="1" max="5" />
+            </div>
+          </div>
+          <button class="btn btn-primary" id="btn-create-world">
+            Create World
+          </button>
+          <button
+            class="btn btn-danger"
+            id="btn-reset-world"
+            style="margin-top: 6px"
+          >
+            Reset World
+          </button>
+
+          <div class="section-title">Simulation</div>
+          <div class="form-group">
+            <label>Ticks/second</label
+            ><input type="number" id="cfg-tps" value="5" min="1" max="20" />
+          </div>
+          <div class="sim-controls">
+            <button class="btn btn-success" id="btn-sim-start">
+              &#x25B6; Start
+            </button>
+            <button class="btn btn-warning" id="btn-sim-pause">
+              &#x23F8; Pause
+            </button>
+            <button class="btn btn-danger" id="btn-sim-reset">
+              &#x21BA; Reset
+            </button>
+          </div>
+
+          <div class="section-title">Quick Demo</div>
+          <button class="btn btn-primary" id="btn-demo">
+            Load Demo Warehouse
+          </button>
+        </div>
+
+        <!-- ENTITIES TAB -->
+        <div class="tab-pane" id="tab-entities">
+          <div class="section-title">Add Shelf</div>
+          <div class="form-group">
+            <label>Label</label
+            ><input type="text" id="shelf-label" placeholder="Shelf A1" />
+          </div>
+          <div class="form-row-3">
+            <div class="form-group">
+              <label>X</label><input type="number" id="shelf-x" value="2" />
+            </div>
+            <div class="form-group">
+              <label>Y</label><input type="number" id="shelf-y" value="2" />
+            </div>
+            <div class="form-group">
+              <label>Floor</label
+              ><input type="number" id="shelf-floor" value="0" />
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Rows</label
+              ><input type="number" id="shelf-rows" value="3" min="1" />
+            </div>
+            <div class="form-group">
+              <label>Cols</label
+              ><input type="number" id="shelf-cols" value="4" min="1" />
+            </div>
+          </div>
+          <button class="btn btn-primary" id="btn-add-shelf">Add Shelf</button>
+
+          <div class="section-title">Add Robot</div>
+          <div class="form-group">
+            <label>Name</label
+            ><input type="text" id="robot-name" placeholder="R1" />
+          </div>
+          <div class="form-row-3">
+            <div class="form-group">
+              <label>X</label><input type="number" id="robot-x" value="0" />
+            </div>
+            <div class="form-group">
+              <label>Y</label><input type="number" id="robot-y" value="0" />
+            </div>
+            <div class="form-group">
+              <label>Floor</label
+              ><input type="number" id="robot-floor" value="0" />
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Color</label
+            ><input
+              type="color"
+              id="robot-color"
+              value="#f59e0b"
+              style="height: 32px; cursor: pointer"
+            />
+          </div>
+          <button class="btn btn-primary" id="btn-add-robot">Add Robot</button>
+
+          <div class="section-title">Add Elevator</div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>X</label><input type="number" id="elev-x" value="10" />
+            </div>
+            <div class="form-group">
+              <label>Y</label><input type="number" id="elev-y" value="7" />
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Floors (comma-separated)</label
+            ><input type="text" id="elev-floors" value="0,1" />
+          </div>
+          <button class="btn btn-primary" id="btn-add-elevator">
+            Add Elevator
+          </button>
+
+          <div class="section-title">Add Wall Cells</div>
+          <div class="form-group">
+            <label>Cells JSON (array of {x,y,floor})</label>
+            <input
+              type="text"
+              id="wall-cells"
+              placeholder='[{"x":5,"y":0,"floor":0}]'
+            />
+          </div>
+          <button class="btn btn-primary" id="btn-add-walls">Add Walls</button>
+
+          <div class="section-title">Add Parcel to Shelf</div>
+          <div class="form-group">
+            <label>Shelf ID</label
+            ><input type="text" id="parcel-shelf-id" placeholder="shelf id" />
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Row</label
+              ><input type="number" id="parcel-row" value="0" min="0" />
+            </div>
+            <div class="form-group">
+              <label>Col</label
+              ><input type="number" id="parcel-col" value="0" min="0" />
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Label</label
+            ><input type="text" id="parcel-label" placeholder="PKG-001" />
+          </div>
+          <button class="btn btn-primary" id="btn-add-parcel">
+            Add Parcel
+          </button>
+
+          <div class="section-title">Current Entities</div>
+          <ul class="entity-list" id="entity-list"></ul>
+        </div>
+
+        <!-- COMMANDS TAB -->
+        <div class="tab-pane" id="tab-commands">
+          <div class="section-title">Transfer Parcel</div>
+          <div class="form-group">
+            <label>Parcel ID</label
+            ><input type="text" id="cmd-parcel-id" placeholder="parcel id" />
+          </div>
+          <div class="form-row-3">
+            <div class="form-group">
+              <label>Target X</label
+              ><input type="number" id="cmd-tx" value="5" />
+            </div>
+            <div class="form-group">
+              <label>Target Y</label
+              ><input type="number" id="cmd-ty" value="5" />
+            </div>
+            <div class="form-group">
+              <label>Floor</label
+              ><input type="number" id="cmd-tfloor" value="0" />
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Target Shelf ID (optional)</label
+            ><input type="text" id="cmd-shelf-id" placeholder="optional" />
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Slot Row</label
+              ><input type="number" id="cmd-srow" value="0" />
+            </div>
+            <div class="form-group">
+              <label>Slot Col</label
+              ><input type="number" id="cmd-scol" value="0" />
+            </div>
+          </div>
+          <button class="btn btn-success" id="btn-issue-transfer">
+            Issue Transfer
+          </button>
+
+          <div class="section-title">Task Queue</div>
+          <div id="task-list"></div>
+        </div>
+
+        <!-- STATUS TAB -->
+        <div class="tab-pane" id="tab-status">
+          <div class="section-title">Robots</div>
+          <ul class="entity-list" id="robot-status-list"></ul>
+          <div class="section-title">Event Log</div>
+          <div id="log"></div>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
 </html>
