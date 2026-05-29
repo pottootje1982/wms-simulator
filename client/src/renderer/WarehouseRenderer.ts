@@ -2,37 +2,103 @@ import * as THREE from 'three';
 import { SceneManager } from './SceneManager';
 import {
   FullStatePayload, TickUpdatePayload, WorldConfig,
-  Robot, Shelf, Elevator, Parcel, Wall, Conveyor
+  Robot, Shelf, Elevator, Parcel, Wall, Conveyor, ConveyorDir
 } from '../types';
 
-const CELL = 1.5;   // world units per grid cell
-const FLOOR_H = 5;  // world units per floor
+const CELL    = 1.5;  // world units per grid cell
+const FLOOR_H = 5.5;  // world units per floor (tall enough for racks + clearance)
 
 function cellPos(x: number, y: number, floor: number): THREE.Vector3 {
   return new THREE.Vector3(x * CELL, floor * FLOOR_H, y * CELL);
 }
 
-// Materials
-const MAT = {
-  floor:     new THREE.MeshLambertMaterial({ color: 0x1e293b }),
-  floorGrid: new THREE.MeshLambertMaterial({ color: 0x334155, transparent: true, opacity: 0.3 }),
-  shelf:     new THREE.MeshLambertMaterial({ color: 0x78350f }),
-  shelfRack: new THREE.MeshLambertMaterial({ color: 0xb45309 }),
-  wall:      new THREE.MeshLambertMaterial({ color: 0x475569 }),
-  elevator:  new THREE.MeshLambertMaterial({ color: 0x6366f1, transparent: true, opacity: 0.7 }),
-  conveyor:  new THREE.MeshLambertMaterial({ color: 0x0f766e }),
-  charging:  new THREE.MeshLambertMaterial({ color: 0x16a34a }),
-  operator:  new THREE.MeshLambertMaterial({ color: 0x7c3aed }),
+function hexColor(c: string): number {
+  return parseInt(c.replace('#', '0x'), 16);
+}
+
+// ── Shared materials (created once) ───────────────────────
+
+const M = {
+  wall:        new THREE.MeshLambertMaterial({ color: 0x8fa4ad }),
+  rackUpright: new THREE.MeshLambertMaterial({ color: 0x5a6d7a }),
+  rackBeam:    new THREE.MeshLambertMaterial({ color: 0x6d8290 }),
+  rackPlank:   new THREE.MeshLambertMaterial({ color: 0x9eb8c2 }),
+  rackBack:    new THREE.MeshLambertMaterial({ color: 0x7a9ba8, transparent: true, opacity: 0.18, side: THREE.DoubleSide }),
+  convFrame:   new THREE.MeshLambertMaterial({ color: 0x3d4a55 }),
+  convBelt:    new THREE.MeshLambertMaterial({ color: 0x505f6e }),
+  convEdge:    new THREE.MeshLambertMaterial({ color: 0xe8a020 }), // safety yellow
+  elevFrame:   new THREE.MeshLambertMaterial({ color: 0x7a9ab0, transparent: true, opacity: 0.55 }),
+  elevDoor:    new THREE.MeshLambertMaterial({ color: 0xb0c8d8 }),
+  wheel:       new THREE.MeshLambertMaterial({ color: 0x2d3748 }),
 };
+
+// ── Floor tile canvas texture ──────────────────────────────
+
+function makeFloorTexture(): THREE.CanvasTexture {
+  const S = 128;
+  const c = document.createElement('canvas');
+  c.width = c.height = S;
+  const ctx = c.getContext('2d')!;
+  ctx.fillStyle   = '#d5d0c8';
+  ctx.fillRect(0, 0, S, S);
+  ctx.strokeStyle = '#c4bfb7';
+  ctx.lineWidth   = 2;
+  ctx.strokeRect(1, 1, S - 2, S - 2);
+  // Subtle inner highlight
+  ctx.strokeStyle = '#dbd6ce';
+  ctx.lineWidth   = 1;
+  ctx.strokeRect(3, 3, S - 6, S - 6);
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  return tex;
+}
+
+// ── Conveyor belt arrow texture ────────────────────────────
+
+function makeConveyorTexture(dir: ConveyorDir): THREE.CanvasTexture {
+  const S = 64;
+  const c = document.createElement('canvas');
+  c.width = c.height = S;
+  const ctx = c.getContext('2d')!;
+  ctx.fillStyle = '#505f6e';
+  ctx.fillRect(0, 0, S, S);
+
+  // Diagonal stripes as belt texture
+  ctx.strokeStyle = '#5d6e7e';
+  ctx.lineWidth   = 4;
+  for (let i = -S; i < S * 2; i += 12) {
+    ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i + S, S); ctx.stroke();
+  }
+
+  // Directional chevron arrow
+  ctx.fillStyle   = '#7a8f9f';
+  ctx.strokeStyle = '#7a8f9f';
+  ctx.lineWidth   = 3;
+  ctx.save();
+  ctx.translate(S / 2, S / 2);
+  const angle = { N: -Math.PI / 2, S: Math.PI / 2, E: 0, W: Math.PI }[dir] ?? 0;
+  ctx.rotate(angle);
+  ctx.beginPath();
+  ctx.moveTo( 10,  0);
+  ctx.lineTo(-8, -9);
+  ctx.lineTo(-4,  0);
+  ctx.lineTo(-8,  9);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+
+  return new THREE.CanvasTexture(c);
+}
 
 export class WarehouseRenderer {
   private sm: SceneManager;
-  private worldGroup = new THREE.Group();
-  private robotMeshes   = new Map<string, THREE.Group>();
-  private parcelMeshes  = new Map<string, THREE.Mesh>();
-  private elevatorMeshes = new Map<string, THREE.Mesh>();
+  private worldGroup  = new THREE.Group();
+  private robotMeshes = new Map<string, THREE.Group>();
+  private parcelMeshes= new Map<string, THREE.Mesh>();
+  private elevatorMeshes = new Map<string, THREE.Group>();
+  private conveyorBelts: THREE.Mesh[] = []; // for UV scroll animation
   private activeFloor = 0;
-  private config?: WorldConfig;
+  private conveyorTime = 0;
 
   constructor(sm: SceneManager) {
     this.sm = sm;
@@ -45,24 +111,22 @@ export class WarehouseRenderer {
   }
 
   private updateFloorVisibility() {
-    // All floors visible but higher floors are slightly transparent
     this.worldGroup.traverse(obj => {
-      if (obj instanceof THREE.Mesh && obj.userData.floor !== undefined) {
-        const f = obj.userData.floor as number;
-        obj.visible = f === this.activeFloor;
-      }
+      if (obj.userData.floor !== undefined)
+        obj.visible = (obj.userData.floor as number) === this.activeFloor;
     });
-    // Robots/parcels always visible if on active floor
-    for (const [, g] of this.robotMeshes) g.visible = g.userData.floor === this.activeFloor;
+    for (const [, g] of this.robotMeshes)  g.visible = g.userData.floor === this.activeFloor;
     for (const [, m] of this.parcelMeshes) m.visible = m.userData.floor === this.activeFloor;
   }
 
+  // ── State application ──────────────────────────────────
+
   applyFullState(state: FullStatePayload) {
-    this.config = state.config;
     this.worldGroup.clear();
     this.robotMeshes.clear();
     this.parcelMeshes.clear();
     this.elevatorMeshes.clear();
+    this.conveyorBelts = [];
 
     this.buildFloors(state.config);
     for (const w of state.walls)     this.addWall(w);
@@ -83,19 +147,43 @@ export class WarehouseRenderer {
   }
 
   animateFrame(dt: number) {
-    const speed = 6; // visual interpolation speed
+    // Smooth robot movement
+    const speed = 7;
     for (const [, group] of this.robotMeshes) {
       const target = group.userData.targetPos as THREE.Vector3;
       if (target) group.position.lerp(target, Math.min(dt * speed, 1));
     }
+
+    // Scroll conveyor belt UV
+    this.conveyorTime += dt;
+    for (const mesh of this.conveyorBelts) {
+      const mat = mesh.material as THREE.MeshLambertMaterial;
+      if (mat.map) {
+        const dir = mesh.userData.direction as ConveyorDir;
+        const speed = 0.6;
+        if (dir === 'E') mat.map.offset.x += dt * speed;
+        if (dir === 'W') mat.map.offset.x -= dt * speed;
+        if (dir === 'S') mat.map.offset.y -= dt * speed;
+        if (dir === 'N') mat.map.offset.y += dt * speed;
+        mat.map.needsUpdate = true;
+      }
+    }
   }
 
-  // ── Build floor planes ─────────────────────────────────
+  // ── Floor ──────────────────────────────────────────────
 
   private buildFloors(cfg: WorldConfig) {
+    const floorTex = makeFloorTexture();
+
     for (let f = 0; f < cfg.floors; f++) {
-      const geo = new THREE.PlaneGeometry(cfg.width * CELL, cfg.depth * CELL);
-      const mesh = new THREE.Mesh(geo, MAT.floor.clone());
+      // Tile the texture so each grid cell = 1 tile
+      const tileTex = floorTex.clone();
+      tileTex.repeat.set(cfg.width, cfg.depth);
+      tileTex.needsUpdate = true;
+
+      const geo  = new THREE.PlaneGeometry(cfg.width * CELL, cfg.depth * CELL);
+      const mat  = new THREE.MeshLambertMaterial({ map: tileTex });
+      const mesh = new THREE.Mesh(geo, mat);
       mesh.rotation.x = -Math.PI / 2;
       mesh.position.set(
         (cfg.width  / 2 - 0.5) * CELL,
@@ -106,190 +194,417 @@ export class WarehouseRenderer {
       mesh.userData.floor = f;
       this.worldGroup.add(mesh);
 
-      // Grid lines
-      const grid = new THREE.GridHelper(Math.max(cfg.width, cfg.depth) * CELL, Math.max(cfg.width, cfg.depth), 0x334155, 0x1e293b);
-      grid.position.set((cfg.width / 2 - 0.5) * CELL, f * FLOOR_H, (cfg.depth / 2 - 0.5) * CELL);
-      grid.userData.floor = f;
-      this.worldGroup.add(grid);
+      // Yellow aisle marking lines (every 3 cells)
+      const aisleGroup = new THREE.Group();
+      aisleGroup.userData.floor = f;
+      const lineMat = new THREE.LineBasicMaterial({ color: 0xe8c14a, transparent: true, opacity: 0.4 });
+      for (let x = 0; x <= cfg.width; x += 3) {
+        const pts = [
+          new THREE.Vector3(x * CELL - 0.5 * CELL, f * FLOOR_H + 0.01, -0.5 * CELL),
+          new THREE.Vector3(x * CELL - 0.5 * CELL, f * FLOOR_H + 0.01, (cfg.depth - 0.5) * CELL),
+        ];
+        const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), lineMat);
+        aisleGroup.add(line);
+      }
+      this.worldGroup.add(aisleGroup);
+
+      // Upper floor structure: add a ceiling/mezzanine for floors > 0
+      if (f > 0) {
+        const ceilGeo = new THREE.PlaneGeometry(cfg.width * CELL, cfg.depth * CELL);
+        const ceilMat = new THREE.MeshLambertMaterial({ color: 0xb8c8cc, side: THREE.BackSide, transparent: true, opacity: 0.3 });
+        const ceil    = new THREE.Mesh(ceilGeo, ceilMat);
+        ceil.rotation.x = -Math.PI / 2;
+        ceil.position.set(
+          (cfg.width  / 2 - 0.5) * CELL,
+          f * FLOOR_H - 0.01,
+          (cfg.depth / 2 - 0.5) * CELL
+        );
+        ceil.userData.floor = f - 1;
+        this.worldGroup.add(ceil);
+      }
     }
   }
 
+  // ── Wall ──────────────────────────────────────────────
+
   private addWall(w: Wall) {
-    const geo = new THREE.BoxGeometry(CELL, CELL * 1.5, CELL);
-    const mesh = new THREE.Mesh(geo, MAT.wall);
-    mesh.position.copy(cellPos(w.position.x, w.position.y, w.position.floor));
-    mesh.position.y += CELL * 0.75;
-    mesh.castShadow = true;
-    mesh.userData.floor = w.position.floor;
-    this.worldGroup.add(mesh);
+    const { x, y, floor } = w.position;
+    const group = new THREE.Group();
+    group.userData.floor = floor;
+
+    const body = new THREE.Mesh(
+      new THREE.BoxGeometry(CELL, FLOOR_H * 0.65, CELL),
+      M.wall
+    );
+    body.position.set(0, FLOOR_H * 0.325, 0);
+    body.castShadow = true;
+    body.receiveShadow = true;
+    group.add(body);
+
+    // Horizontal band detail
+    const band = new THREE.Mesh(
+      new THREE.BoxGeometry(CELL + 0.02, 0.08, CELL + 0.02),
+      new THREE.MeshLambertMaterial({ color: 0xf5c518 }) // yellow safety stripe
+    );
+    band.position.y = 0.25;
+    group.add(band);
+
+    const base = cellPos(x, y, floor);
+    group.position.copy(base);
+    this.worldGroup.add(group);
   }
+
+  // ── Shelf rack ────────────────────────────────────────
 
   private addShelf(s: Shelf) {
     const sp = s.shelfPosition;
     const group = new THREE.Group();
     group.userData.floor = sp.floor;
 
-    // Main frame
-    const frame = new THREE.Mesh(
-      new THREE.BoxGeometry(CELL * 0.9, CELL * 2, CELL * 0.9),
-      MAT.shelf
-    );
-    frame.position.y = CELL;
-    frame.castShadow = true;
-    group.add(frame);
+    const W = CELL * 0.88;
+    const D = CELL * 0.52;
+    const levels = Math.min(s.rows, 5);
+    const rackH  = 0.5 + levels * 0.58;
+    const levelH = rackH / (levels + 0.5);
 
-    // Shelf levels
-    const levels = Math.min(s.rows, 4);
-    for (let r = 0; r < levels; r++) {
-      const plank = new THREE.Mesh(
-        new THREE.BoxGeometry(CELL * 0.85, 0.05, CELL * 0.85),
-        MAT.shelfRack
-      );
-      plank.position.y = 0.3 + r * 0.55;
-      group.add(plank);
+    // 4 corner uprights
+    const upGeo = new THREE.BoxGeometry(0.055, rackH, 0.055);
+    for (const [ux, uz] of [
+      [-W / 2 + 0.04, -D / 2 + 0.04],
+      [ W / 2 - 0.04, -D / 2 + 0.04],
+      [-W / 2 + 0.04,  D / 2 - 0.04],
+      [ W / 2 - 0.04,  D / 2 - 0.04],
+    ]) {
+      const up = new THREE.Mesh(upGeo, M.rackUpright);
+      up.position.set(ux, rackH / 2, uz);
+      up.castShadow = true;
+      group.add(up);
     }
+
+    // Shelf planks + front/back cross-beams at each level
+    const plankGeo = new THREE.BoxGeometry(W - 0.04, 0.04, D - 0.04);
+    const beamGeo  = new THREE.BoxGeometry(W - 0.04, 0.035, 0.04);
+
+    for (let l = 0; l <= levels; l++) {
+      const y = l === 0 ? 0.025 : l * levelH + 0.025;
+
+      const plank = new THREE.Mesh(plankGeo, M.rackPlank);
+      plank.position.y = y;
+      plank.receiveShadow = true;
+      group.add(plank);
+
+      // Front beam
+      const beamF = new THREE.Mesh(beamGeo, M.rackBeam);
+      beamF.position.set(0, y + 0.038, D / 2 - 0.04);
+      group.add(beamF);
+      // Back beam
+      const beamB = new THREE.Mesh(beamGeo, M.rackBeam);
+      beamB.position.set(0, y + 0.038, -D / 2 + 0.04);
+      group.add(beamB);
+
+      // Place visible parcel stubs on shelf (1 per slot column, if occupied)
+      if (l > 0 && l <= levels) {
+        for (let c = 0; c < s.cols; c++) {
+          const slot = s.slots[l - 1]?.[c];
+          if (slot?.parcelId) {
+            const stub = new THREE.Mesh(
+              new THREE.BoxGeometry(0.18, 0.18, 0.15),
+              new THREE.MeshLambertMaterial({ color: 0xb07020 })
+            );
+            stub.position.set(
+              -W / 2 + 0.12 + c * ((W - 0.24) / Math.max(s.cols - 1, 1)),
+              (l - 1) * levelH + 0.12,
+              0
+            );
+            group.add(stub);
+          }
+        }
+      }
+    }
+
+    // Back panel (mesh-like opacity)
+    const backPanel = new THREE.Mesh(
+      new THREE.PlaneGeometry(W - 0.06, rackH),
+      M.rackBack
+    );
+    backPanel.position.set(0, rackH / 2, -D / 2 + 0.01);
+    group.add(backPanel);
+
+    // Label strip
+    const labelGeo = new THREE.BoxGeometry(W * 0.5, 0.1, 0.02);
+    const labelMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
+    const label = new THREE.Mesh(labelGeo, labelMat);
+    label.position.set(0, 0.08, D / 2 + 0.01);
+    group.add(label);
 
     const base = cellPos(sp.x, sp.y, sp.floor);
     group.position.copy(base);
     this.worldGroup.add(group);
   }
 
+  // ── Elevator ──────────────────────────────────────────
+
   private addElevator(e: Elevator) {
     for (const f of e.floors) {
-      const mesh = new THREE.Mesh(
-        new THREE.BoxGeometry(CELL, CELL * 3, CELL),
-        MAT.elevator.clone()
+      const group = new THREE.Group();
+      group.userData.floor = f;
+
+      const H    = FLOOR_H * 0.8;
+      const half = CELL * 0.45;
+
+      // 4 corner columns
+      for (const [cx2, cz2] of [[-half, -half], [half, -half], [-half, half], [half, half]]) {
+        const col = new THREE.Mesh(
+          new THREE.BoxGeometry(0.07, H, 0.07),
+          new THREE.MeshLambertMaterial({ color: 0x6a8eaa })
+        );
+        col.position.set(cx2, H / 2, cz2);
+        col.castShadow = true;
+        group.add(col);
+      }
+
+      // Platform / platform floor
+      const platform = new THREE.Mesh(
+        new THREE.BoxGeometry(CELL * 0.85, 0.06, CELL * 0.85),
+        new THREE.MeshLambertMaterial({ color: 0x8ab4c8 })
       );
-      mesh.position.copy(cellPos(e.x, e.y, f));
-      mesh.position.y += CELL * 1.5;
-      mesh.userData.floor = f;
-      this.worldGroup.add(mesh);
-      this.elevatorMeshes.set(`${e.id}-${f}`, mesh);
+      platform.position.y = 0.03;
+      platform.name = 'platform';
+      group.add(platform);
+
+      // Shaft walls (semi-transparent)
+      const shaftMat = new THREE.MeshLambertMaterial({ color: 0x9bc0d0, transparent: true, opacity: 0.18, side: THREE.DoubleSide });
+      for (const [sx, sz, sw, sd] of [
+        [0, -half, CELL * 0.9, 0.01],
+        [0,  half, CELL * 0.9, 0.01],
+        [-half, 0, 0.01, CELL * 0.9],
+        [ half, 0, 0.01, CELL * 0.9],
+      ]) {
+        const wall = new THREE.Mesh(new THREE.BoxGeometry(sw, H, sd), shaftMat);
+        wall.position.set(sx, H / 2, sz);
+        group.add(wall);
+      }
+
+      // Floor indicator label
+      const indicator = new THREE.Mesh(
+        new THREE.BoxGeometry(0.25, 0.25, 0.02),
+        new THREE.MeshLambertMaterial({ color: 0xf59e0b })
+      );
+      indicator.position.set(half + 0.02, 1.2, 0);
+      group.add(indicator);
+
+      const base = cellPos(e.x, e.y, f);
+      group.position.copy(base);
+      this.elevatorMeshes.set(`${e.id}-${f}`, group);
+      this.worldGroup.add(group);
     }
   }
+
+  // ── Conveyor belt ─────────────────────────────────────
 
   private addConveyor(c: Conveyor) {
     for (const cc of c.cells) {
-      const mesh = new THREE.Mesh(
-        new THREE.BoxGeometry(CELL * 0.9, 0.12, CELL * 0.9),
-        MAT.conveyor
-      );
-      const p = cellPos(cc.x, cc.y, cc.floor);
-      mesh.position.set(p.x, p.y + 0.06, p.z);
-      mesh.userData.floor = cc.floor;
-      this.worldGroup.add(mesh);
+      const p    = cellPos(cc.x, cc.y, cc.floor);
+      const isNS = cc.direction === 'N' || cc.direction === 'S';
 
-      // Arrow indicator
-      const arrow = new THREE.Mesh(
-        new THREE.ConeGeometry(0.15, 0.3, 4),
-        new THREE.MeshLambertMaterial({ color: 0x99f6e4 })
+      // Frame
+      const frame = new THREE.Mesh(
+        new THREE.BoxGeometry(CELL * 0.88, 0.2, CELL * 0.88),
+        M.convFrame
       );
-      arrow.position.set(p.x, p.y + 0.25, p.z);
-      const rot = { N: 0, S: Math.PI, E: Math.PI / 2, W: -Math.PI / 2 }[cc.direction] ?? 0;
-      arrow.rotation.y = rot;
-      arrow.rotation.z = -Math.PI / 2;
-      arrow.userData.floor = cc.floor;
-      this.worldGroup.add(arrow);
+      frame.position.set(p.x, p.y + 0.1, p.z);
+      frame.castShadow = true;
+      frame.userData.floor = cc.floor;
+      this.worldGroup.add(frame);
+
+      // Belt surface (animated)
+      const beltTex = makeConveyorTexture(cc.direction);
+      const belt = new THREE.Mesh(
+        new THREE.BoxGeometry(CELL * 0.78, 0.025, CELL * 0.78),
+        new THREE.MeshLambertMaterial({ map: beltTex, color: 0x607080 })
+      );
+      belt.position.set(p.x, p.y + 0.213, p.z);
+      belt.userData.floor     = cc.floor;
+      belt.userData.direction = cc.direction;
+      this.worldGroup.add(belt);
+      this.conveyorBelts.push(belt);
+
+      // Safety yellow edge strips
+      const edgeW = isNS ? CELL * 0.88 : 0.06;
+      const edgeD = isNS ? 0.06          : CELL * 0.88;
+      for (const offset of [-1, 1]) {
+        const edge = new THREE.Mesh(
+          new THREE.BoxGeometry(edgeW, 0.08, edgeD),
+          M.convEdge
+        );
+        edge.position.set(
+          p.x + (isNS ? 0 : offset * CELL * 0.41),
+          p.y + 0.17,
+          p.z + (isNS ? offset * CELL * 0.41 : 0)
+        );
+        edge.userData.floor = cc.floor;
+        this.worldGroup.add(edge);
+      }
     }
   }
 
-  private addRobot(r: Robot) {
-    const group = new THREE.Group();
-    const bodyColor = parseInt(r.color.replace('#', ''), 16);
+  // ── AGV Robot ─────────────────────────────────────────
 
-    // Body
+  private addRobot(r: Robot) {
+    const group     = new THREE.Group();
+    const bodyHex   = hexColor(r.color);
+    const bodyColor = new THREE.Color(bodyHex);
+    const darkHex   = bodyColor.clone().multiplyScalar(0.65).getHex();
+
+    // Main flat body — AGV chassis
     const body = new THREE.Mesh(
-      new THREE.BoxGeometry(CELL * 0.55, CELL * 0.45, CELL * 0.55),
-      new THREE.MeshLambertMaterial({ color: bodyColor })
+      new THREE.BoxGeometry(CELL * 0.65, 0.16, CELL * 0.65),
+      new THREE.MeshLambertMaterial({ color: bodyHex })
     );
-    body.position.y = 0.33;
+    body.position.y = 0.13;
     body.castShadow = true;
     group.add(body);
 
-    // Head/sensor dome
-    const head = new THREE.Mesh(
-      new THREE.SphereGeometry(CELL * 0.2, 8, 6),
-      new THREE.MeshLambertMaterial({ color: 0xf8fafc })
+    // Top cap panel (slightly darker)
+    const cap = new THREE.Mesh(
+      new THREE.BoxGeometry(CELL * 0.56, 0.05, CELL * 0.56),
+      new THREE.MeshLambertMaterial({ color: darkHex })
     );
-    head.position.y = 0.62;
-    group.add(head);
+    cap.position.y = 0.235;
+    group.add(cap);
 
-    // Status LED
+    // Sensor mast (thin cylinder)
+    const mast = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.032, 0.04, 0.42, 8),
+      new THREE.MeshLambertMaterial({ color: 0x2d3748 })
+    );
+    mast.position.y = 0.47;
+    group.add(mast);
+
+    // Sensor head (LIDAR disc)
+    const sensor = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.09, 0.08, 0.09, 12),
+      new THREE.MeshLambertMaterial({ color: 0x1a202c })
+    );
+    sensor.position.y = 0.70;
+    group.add(sensor);
+
+    // Status LED ring (torus)
     const led = new THREE.Mesh(
-      new THREE.SphereGeometry(0.08, 6, 6),
+      new THREE.TorusGeometry(0.065, 0.018, 6, 18),
       new THREE.MeshBasicMaterial({ color: 0x22c55e })
     );
-    led.position.set(0, 0.75, CELL * 0.2);
+    led.rotation.x = Math.PI / 2;
+    led.position.y = 0.72;
     led.name = 'led';
     group.add(led);
 
-    // Wheels (4 corners)
-    const wheelGeo = new THREE.CylinderGeometry(0.1, 0.1, 0.06, 8);
-    const wheelMat = new THREE.MeshLambertMaterial({ color: 0x1e293b });
-    for (const [wx, wz] of [[-0.22, -0.22], [0.22, -0.22], [-0.22, 0.22], [0.22, 0.22]] as [number, number][]) {
-      const w = new THREE.Mesh(wheelGeo, wheelMat);
+    // 4 rubber wheels
+    const wheelGeo = new THREE.CylinderGeometry(0.075, 0.075, 0.055, 10);
+    for (const [wx, wz] of [
+      [-0.25, -0.25], [ 0.25, -0.25],
+      [-0.25,  0.25], [ 0.25,  0.25],
+    ] as [number, number][]) {
+      const w = new THREE.Mesh(wheelGeo, M.wheel);
       w.rotation.z = Math.PI / 2;
-      w.position.set(wx, 0.1, wz);
+      w.position.set(wx, 0.055, wz);
       group.add(w);
     }
+
+    // Bumper strip (front safety bumper)
+    const bumper = new THREE.Mesh(
+      new THREE.BoxGeometry(CELL * 0.65, 0.05, 0.04),
+      new THREE.MeshLambertMaterial({ color: 0x1a202c })
+    );
+    bumper.position.set(0, 0.13, CELL * 0.33);
+    group.add(bumper);
 
     const pos = cellPos(r.position.x, r.position.y, r.position.floor);
     group.position.copy(pos);
     group.userData.targetPos = pos.clone();
-    group.userData.floor = r.position.floor;
-    group.userData.id = r.id;
+    group.userData.floor     = r.position.floor;
+    group.userData.id        = r.id;
     this.robotMeshes.set(r.id, group);
     this.worldGroup.add(group);
   }
 
+  // ── Parcel ────────────────────────────────────────────
+
   private addParcel(p: Parcel) {
-    const color = parseInt(p.color.replace('#', ''), 16);
-    const mesh = new THREE.Mesh(
-      new THREE.BoxGeometry(CELL * 0.4, CELL * 0.35, CELL * 0.4),
+    const color = hexColor(p.color);
+    const group = new THREE.Group();
+
+    // Box body
+    const box = new THREE.Mesh(
+      new THREE.BoxGeometry(CELL * 0.38, CELL * 0.32, CELL * 0.38),
       new THREE.MeshLambertMaterial({ color })
     );
-    mesh.castShadow = true;
-    this.parcelMeshes.set(p.id, mesh);
-    this.worldGroup.add(mesh);
+    box.castShadow = true;
+    group.add(box);
+
+    // White label strip on top
+    const label = new THREE.Mesh(
+      new THREE.BoxGeometry(CELL * 0.24, 0.02, CELL * 0.18),
+      new THREE.MeshLambertMaterial({ color: 0xffffff })
+    );
+    label.position.y = CELL * 0.16 + 0.01;
+    group.add(label);
+
+    // Tape stripe (X)
+    const tape = new THREE.Mesh(
+      new THREE.BoxGeometry(CELL * 0.38, 0.015, 0.04),
+      new THREE.MeshLambertMaterial({ color: 0xf8d070 })
+    );
+    tape.position.y = CELL * 0.1;
+    group.add(tape);
+
+    this.parcelMeshes.set(p.id, group as unknown as THREE.Mesh);
+    this.worldGroup.add(group);
     this.updateParcel(p);
   }
+
+  // ── Update helpers ────────────────────────────────────
 
   private updateRobot(r: Robot) {
     let group = this.robotMeshes.get(r.id);
     if (!group) { this.addRobot(r); group = this.robotMeshes.get(r.id)!; }
 
-    const target = cellPos(r.position.x, r.position.y, r.position.floor);
-    group.userData.targetPos = target;
-    group.userData.floor = r.position.floor;
+    group.userData.targetPos = cellPos(r.position.x, r.position.y, r.position.floor);
+    group.userData.floor     = r.position.floor;
 
-    // Update LED color by status
     const led = group.getObjectByName('led') as THREE.Mesh | undefined;
     if (led) {
       const mat = led.material as THREE.MeshBasicMaterial;
-      if (r.status === 'idle')         mat.color.setHex(0x22c55e);
-      else if (r.status.startsWith('navigating')) mat.color.setHex(0x3b82f6);
-      else if (r.status === 'picking_up' || r.status === 'dropping_off') mat.color.setHex(0xf59e0b);
-      else if (r.status === 'in_elevator') mat.color.setHex(0xa855f7);
-      else mat.color.setHex(0x64748b);
+      const ledColors: Record<string, number> = {
+        'idle':                0x22c55e,
+        'navigating_to_pickup': 0x3b82f6,
+        'navigating_to_dropoff':0x3b82f6,
+        'navigating_to_elevator':0x818cf8,
+        'picking_up':           0xf59e0b,
+        'dropping_off':         0xf59e0b,
+        'in_elevator':          0xa78bfa,
+        'charging':             0x10b981,
+      };
+      mat.color.setHex(ledColors[r.status] ?? 0x64748b);
     }
     this.updateFloorVisibility();
   }
 
   private updateParcel(p: Parcel) {
-    const mesh = this.parcelMeshes.get(p.id);
+    const mesh = this.parcelMeshes.get(p.id) as unknown as THREE.Group | undefined;
     if (!mesh) { this.addParcel(p); return; }
 
     if (p.status === 'being_carried' && p.carriedBy) {
       const robot = this.robotMeshes.get(p.carriedBy);
       if (robot) {
         mesh.position.copy(robot.userData.targetPos as THREE.Vector3);
-        mesh.position.y += 0.7;
+        mesh.position.y += 0.56;
         mesh.userData.floor = robot.userData.floor;
       }
     } else if (p.position) {
       const pos = cellPos(p.position.x, p.position.y, p.position.floor);
       mesh.position.copy(pos);
-      mesh.position.y += 0.25;
+      mesh.position.y += 0.22;
       mesh.userData.floor = p.position.floor;
     } else if (p.shelfId) {
       mesh.visible = false;
@@ -299,17 +614,20 @@ export class WarehouseRenderer {
   }
 
   private updateElevator(e: Elevator) {
-    const m = this.elevatorMeshes.get(`${e.id}-${e.currentFloor}`);
-    if (!m) return;
-    const mat = m.material as THREE.MeshLambertMaterial;
-    mat.color.setHex(e.status === 'doors_open' ? 0x22d3ee : 0x6366f1);
+    const group = this.elevatorMeshes.get(`${e.id}-${e.currentFloor}`);
+    if (!group) return;
+    const platform = group.getObjectByName('platform') as THREE.Mesh | undefined;
+    if (platform) {
+      const mat = platform.material as THREE.MeshLambertMaterial;
+      mat.color.setHex(e.status === 'doors_open' ? 0x22d3ee : 0x8ab4c8);
+    }
   }
 
   private centerCamera(cfg: WorldConfig) {
-    const cx = (cfg.width  / 2) * CELL;
-    const cz = (cfg.depth  / 2) * CELL;
+    const cx = (cfg.width  / 2 - 0.5) * CELL;
+    const cz = (cfg.depth  / 2 - 0.5) * CELL;
     this.sm.controls.target.set(cx, 0, cz);
-    this.sm.camera.position.set(cx + 20, 25, cz + 20);
+    this.sm.camera.position.set(cx + 20, 30, cz + 24);
     this.sm.controls.update();
   }
 }
