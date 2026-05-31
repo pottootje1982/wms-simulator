@@ -347,14 +347,19 @@ export class Panel {
     await post('/api/world/begin-batch', {});
 
     // ── Conveyors ──────────────────────────────────────────
+    // Floor 0
     await post('/api/conveyors', {
       label: 'Inbound', speedTicks: 3,
       cells: Array.from({ length: W - 1 }, (_, i) => ({ x: i, y: 0, floor: 0, direction: 'E' as const })),
     });
-
     const outboundConv = await post('/api/conveyors', {
       label: 'Outbound', speedTicks: 2,
       cells: Array.from({ length: W - 1 }, (_, i) => ({ x: W - 2 - i, y: 21, floor: 0, direction: 'W' as const })),
+    });
+    // Floor 1 — outbound belt (mirrors floor 0): robots deposit picks, belt exits west
+    const f1OutboundConv = await post('/api/conveyors', {
+      label: 'F1 Outbound', speedTicks: 2,
+      cells: Array.from({ length: W - 1 }, (_, i) => ({ x: W - 2 - i, y: 21, floor: 1, direction: 'W' as const })),
     });
 
     // ── Rack rows ──────────────────────────────────────────
@@ -390,7 +395,29 @@ export class Panel {
       allShelves.push(...rowShelves);
     }
 
+    // ── Floor 1 — 4 rack rows × 16 bays (labels E·N/S, F·N/S) ──
+    const F1_BAYS = 16;
+    const f1RowDefs: { accessY: number; facing: 'N' | 'S'; label: string }[] = [
+      { accessY: 3,  facing: 'N', label: 'E·N' },
+      { accessY: 4,  facing: 'S', label: 'E·S' },
+      { accessY: 13, facing: 'N', label: 'F·N' },
+      { accessY: 14, facing: 'S', label: 'F·S' },
+    ];
+    for (const { accessY, facing, label } of f1RowDefs) {
+      const rowShelves = await Promise.all(
+        Array.from({ length: F1_BAYS }, (_, bi) =>
+          post('/api/shelves', {
+            label: `${label}-${bi + 1}`,
+            x: bi + 1, y: accessY, floor: 1,
+            rows: 3, cols: 2, facing,
+          })
+        )
+      );
+      allShelves.push(...rowShelves);
+    }
+
     // ── Robots ─────────────────────────────────────────────
+    // Floor 0
     const colors = ['#ef4444','#f97316','#eab308','#22c55e','#06b6d4','#3b82f6','#8b5cf6','#ec4899'];
     const robotDefs = [
       { name:'R1', x:4,  y:1  }, { name:'R2', x:6,  y:1  },
@@ -400,6 +427,14 @@ export class Panel {
     ];
     await Promise.all(robotDefs.map((r, i) =>
       post('/api/robots', { name: r.name, x: r.x, y: r.y, floor: 0, color: colors[i] })
+    ));
+    // Floor 1 — 4 robots staged in the central highway
+    const f1Colors = ['#f43f5e','#fb923c','#a3e635','#22d3ee'];
+    await Promise.all([
+      { name:'R9', x:3, y:8 }, { name:'R10', x:6, y:8 },
+      { name:'R11', x:9, y:8 }, { name:'R12', x:12, y:8 },
+    ].map((r, i) =>
+      post('/api/robots', { name: r.name, x: r.x, y: r.y, floor: 1, color: f1Colors[i] })
     ));
 
     // ── Elevators ──────────────────────────────────────────
@@ -428,6 +463,9 @@ export class Panel {
 
     // ── Start simulation ───────────────────────────────────
     await post('/api/sim/start', { ticksPerSecond: 5 });
-    await post('/api/sim/perpetual', { outboundConveyorId: outboundConv.id });
+    // Floor 0: R1–R8 pick from floor-0 shelves → floor-0 outbound
+    await post('/api/sim/perpetual', { outboundConveyorId: outboundConv.id,   floor: 0 });
+    // Floor 1: R9–R12 pick from floor-1 shelves → floor-1 outbound (stays on floor 1)
+    await post('/api/sim/perpetual', { outboundConveyorId: f1OutboundConv.id, floor: 1 });
   }
 }

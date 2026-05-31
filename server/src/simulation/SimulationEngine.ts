@@ -35,7 +35,8 @@ export class SimulationEngine {
 
   // ── Perpetual mode ─────────────────────────────────────
   private perpetual = false;
-  private outboundConveyorId?: string;
+  // Map of floor → outbound conveyor ID; use floor=-1 as the "all floors" fallback
+  private outboundByFloor = new Map<number, string>();
   private perpetualParcelCounter = 0;
   private perpetualTaskCounter = 0;
 
@@ -43,13 +44,15 @@ export class SimulationEngine {
     this.world = world;
   }
 
-  enablePerpetual(outboundConveyorId: string) {
+  /** Register an outbound conveyor for a specific floor (or -1 for all floors). */
+  enablePerpetual(outboundConveyorId: string, floor = -1) {
     this.perpetual = true;
-    this.outboundConveyorId = outboundConveyorId;
+    this.outboundByFloor.set(floor, outboundConveyorId);
   }
 
   disablePerpetual() {
     this.perpetual = false;
+    this.outboundByFloor.clear();
   }
 
   start(tps = 5) {
@@ -111,30 +114,26 @@ export class SimulationEngine {
 
     for (const task of pending) {
       if (idleRobots.length === 0) break;
-      const robot = idleRobots.shift()!;
 
-      task.status = 'assigned';
-      task.robotId = robot.id;
-      task.startedAt = this.tick;
-      robot.taskId = task.id;
-      robot.status = 'navigating_to_pickup';
-
+      // Resolve parcel + pickup *before* robot selection so we can prefer
+      // a robot already on the same floor — avoids needless cross-floor trips.
       const parcel = this.world.parcels.get(task.parcelId);
-      if (!parcel) {
-        task.status = 'failed';
-        robot.taskId = undefined;
-        robot.status = 'idle';
-        continue;
-      }
-
+      if (!parcel) { task.status = 'failed'; continue; }
       const pickupPos = this.getParcelAccessPos(parcel);
-      if (!pickupPos) {
-        task.status = 'failed';
-        robot.taskId = undefined;
-        robot.status = 'idle';
-        continue;
-      }
+      if (!pickupPos) { task.status = 'failed'; continue; }
 
+      const sameFloorIdx = idleRobots.findIndex(
+        r => r.position.floor === pickupPos.floor,
+      );
+      const robot = sameFloorIdx >= 0
+        ? idleRobots.splice(sameFloorIdx, 1)[0]
+        : idleRobots.shift()!;
+
+      task.status    = 'assigned';
+      task.robotId   = robot.id;
+      task.startedAt = this.tick;
+      robot.taskId   = task.id;
+      robot.status   = 'navigating_to_pickup';
       this.planPath(robot, pickupPos);
     }
   }
@@ -448,12 +447,6 @@ export class SimulationEngine {
   ];
 
   private generatePerpetualTasks() {
-    const conv = this.outboundConveyorId
-      ? this.world.conveyors.get(this.outboundConveyorId)
-      : undefined;
-    if (!conv) return;
-
-    // Count active work to avoid flooding
     const activeTasks = [...this.world.tasks.values()].filter(
       (t) =>
         t.status === 'queued' ||
@@ -463,9 +456,12 @@ export class SimulationEngine {
     const robotCount = this.world.robots.size;
     const maxQueue = robotCount * 2;
 
-    // Create picking tasks (shelf → outbound conveyor entry)
     if (activeTasks < maxQueue) {
-      this.tryCreatePickingTask(conv);
+      // Emit one task per registered outbound (per floor), most-specific floor first
+      for (const [floor, conveyorId] of this.outboundByFloor) {
+        const conv = this.world.conveyors.get(conveyorId);
+        if (conv) this.tryCreatePickingTask(conv, floor === -1 ? undefined : floor);
+      }
     }
 
     // Restock shelves periodically so there are always parcels to pick
@@ -474,16 +470,16 @@ export class SimulationEngine {
     }
   }
 
-  private tryCreatePickingTask(outbound: {
-    id: string;
-    cells: { x: number; y: number; floor: number }[];
-  }) {
+  private tryCreatePickingTask(
+    outbound: { id: string; cells: { x: number; y: number; floor: number }[] },
+    onlyFloor?: number,  // when set, only pick from shelves on this floor
+  ) {
     const entryCell = outbound.cells[0];
     // Don't place if entry cell is already occupied
     if (this.findParcelAt(entryCell.x, entryCell.y, entryCell.floor)) return;
 
-    // Find a random occupied shelf slot with no pending task
-    const parcelIds = new Set(
+    // Find an occupied shelf slot with no pending task (optionally floor-filtered)
+    const taskedParcelIds = new Set(
       [...this.world.tasks.values()]
         .filter((t) => t.status !== 'completed' && t.status !== 'failed')
         .map((t) => t.parcelId),
@@ -491,7 +487,12 @@ export class SimulationEngine {
 
     const candidates: Parcel[] = [];
     for (const p of this.world.parcels.values()) {
-      if (p.status === 'on_shelf' && !parcelIds.has(p.id)) candidates.push(p);
+      if (p.status !== 'on_shelf' || taskedParcelIds.has(p.id)) continue;
+      if (onlyFloor !== undefined) {
+        const shelf = p.shelfId ? this.world.shelves.get(p.shelfId) : undefined;
+        if (!shelf || shelf.accessPosition.floor !== onlyFloor) continue;
+      }
+      candidates.push(p);
     }
 
     if (candidates.length === 0) return;

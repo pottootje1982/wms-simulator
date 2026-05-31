@@ -87,8 +87,8 @@ export function registerRoutes(
 
   app.post(
     '/api/sim/perpetual',
-    async (req: FastifyRequest<{ Body: { outboundConveyorId: string } }>) => {
-      engine.enablePerpetual(req.body.outboundConveyorId);
+    async (req: FastifyRequest<{ Body: { outboundConveyorId: string; floor?: number } }>) => {
+      engine.enablePerpetual(req.body.outboundConveyorId, req.body.floor);
       return { ok: true };
     },
   );
@@ -125,6 +125,7 @@ export function registerRoutes(
           floor: number;
           rows: number;
           cols: number;
+          facing?: 'N' | 'S' | 'E' | 'W';
         };
       }>,
       reply,
