@@ -356,6 +356,11 @@ export class Panel {
       label: 'Outbound', speedTicks: 2,
       cells: Array.from({ length: W - 1 }, (_, i) => ({ x: W - 2 - i, y: 21, floor: 0, direction: 'W' as const })),
     });
+    // Floor 1 — inbound belt (mirrors floor 0): goods arrive from west dock
+    await post('/api/conveyors', {
+      label: 'F1 Inbound', speedTicks: 3,
+      cells: Array.from({ length: W - 1 }, (_, i) => ({ x: i, y: 0, floor: 1, direction: 'E' as const })),
+    });
     // Floor 1 — outbound belt (mirrors floor 0): robots deposit picks, belt exits west
     const f1OutboundConv = await post('/api/conveyors', {
       label: 'F1 Outbound', speedTicks: 2,

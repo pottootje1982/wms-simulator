@@ -132,6 +132,7 @@ export class WarehouseRenderer {
   private conveyorBelts: THREE.Mesh[] = []; // for UV scroll animation
   private activeFloor = 0;
   private ticksPerSecond = 5;
+  private lastConfig?: WorldConfig;
   // keyed "x,y,floor" → speedTicks for that conveyor
   private conveyorCellSpeedTicks = new Map<string, number>();
 
@@ -143,6 +144,8 @@ export class WarehouseRenderer {
   setFloor(floor: number) {
     this.activeFloor = floor;
     this.updateFloorVisibility();
+    // Reposition camera to look at the correct floor level
+    if (this.lastConfig) this.centerCamera(this.lastConfig);
   }
 
   private updateFloorVisibility() {
@@ -172,6 +175,8 @@ export class WarehouseRenderer {
         this.conveyorCellSpeedTicks.set(`${cell.x},${cell.y},${cell.floor}`, c.speedTicks);
       }
     }
+
+    this.lastConfig = state.config;
 
     this.buildFloors(state.config);
     for (const w of state.walls) this.addWall(w);
@@ -911,10 +916,11 @@ export class WarehouseRenderer {
   }
 
   private centerCamera(cfg: WorldConfig) {
-    const cx = (cfg.width / 2) * CELL;
-    const cz = (cfg.depth / 2) * CELL;
-    this.sm.controls.target.set(cx, 0, cz);
-    this.sm.camera.position.set(cx + 20, 30, cz + 24);
+    const cx     = (cfg.width  / 2) * CELL;
+    const cz     = (cfg.depth  / 2) * CELL;
+    const floorY = this.activeFloor * FLOOR_H;   // lift camera for upper floors
+    this.sm.controls.target.set(cx, floorY, cz);
+    this.sm.camera.position.set(cx + 20, floorY + 30, cz + 24);
     this.sm.controls.update();
   }
 }
