@@ -1,0 +1,4 @@
+# bridge.py and spawn_crate.py use only the Python standard library.
+# Nothing to install for the bridge itself.
+#
+# The Pypeline-launched interpreter just needs to be Python 3.
